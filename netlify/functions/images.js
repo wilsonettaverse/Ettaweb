@@ -1,0 +1,44 @@
+const { connectLambda, getImagesMeta, setImagesMeta, imageStore, requireSession, json, uid, parseDataUrl } = require('./_lib');
+
+exports.handler = async (event) => {
+  connectLambda(event);
+
+  if (event.httpMethod === 'POST') {
+    const session = await requireSession(event);
+    if (!session || session.role === 'Viewer') return json(401, { error: 'Sign in required' });
+    let body;
+    try {
+      body = JSON.parse(event.body || '{}');
+    } catch (e) {
+      return json(400, { error: 'Bad JSON' });
+    }
+    const dataUrl = body.dataUrl || body.data;
+    if (!dataUrl || !body.charId) return json(400, { error: 'Missing dataUrl or charId' });
+    const parsed = parseDataUrl(dataUrl);
+    if (!parsed) return json(400, { error: 'Invalid data URL' });
+    const id = body.id || uid();
+    const ts = body.ts || Date.now();
+    const name = body.name || '';
+    await imageStore().set(id, parsed.bytes, { metadata: { contentType: parsed.contentType, charId: body.charId, name: name } });
+    const metaArr = await getImagesMeta();
+    const i = metaArr.findIndex(function (x) { return x.id === id; });
+    const entry = { id: id, charId: body.charId, name: name, ts: ts };
+    if (i >= 0) metaArr[i] = entry;
+    else metaArr.push(entry);
+    await setImagesMeta(metaArr);
+    return json(200, { id: id, charId: body.charId, name: name, ts: ts, data: '/api/image?id=' + encodeURIComponent(id) });
+  }
+
+  if (event.httpMethod === 'DELETE') {
+    const session = await requireSession(event);
+    if (!session || session.role === 'Viewer') return json(401, { error: 'Sign in required' });
+    const id = (event.queryStringParameters || {}).id;
+    if (!id) return json(400, { error: 'Missing id' });
+    await imageStore().delete(id);
+    const metaArr = await getImagesMeta();
+    await setImagesMeta(metaArr.filter(function (x) { return x.id !== id; }));
+    return json(200, { ok: true });
+  }
+
+  return json(405, { error: 'Method not allowed' });
+};

@@ -1,0 +1,9 @@
+{
+  "name": "ettaweb-character-codex",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Character Codex — Etta Global Partners production tracker, backed by Netlify Functions + Netlify Blobs.",
+  "dependencies": {
+    "@netlify/blobs": "^11.1.0"
+  }
+}

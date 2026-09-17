@@ -1,0 +1,61 @@
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/bootstrap"
+  to = "/.netlify/functions/bootstrap"
+  status = 200
+
+[[redirects]]
+  from = "/api/characters"
+  to = "/.netlify/functions/characters"
+  status = 200
+
+[[redirects]]
+  from = "/api/images"
+  to = "/.netlify/functions/images"
+  status = 200
+
+[[redirects]]
+  from = "/api/image"
+  to = "/.netlify/functions/image"
+  status = 200
+
+[[redirects]]
+  from = "/api/settings"
+  to = "/.netlify/functions/settings"
+  status = 200
+
+[[redirects]]
+  from = "/api/auth/login"
+  to = "/.netlify/functions/auth-login"
+  status = 200
+
+[[redirects]]
+  from = "/api/auth/set-password"
+  to = "/.netlify/functions/auth-set-password"
+  status = 200
+
+[[redirects]]
+  from = "/api/seed"
+  to = "/.netlify/functions/seed"
+  status = 200
+
+[[redirects]]
+  from = "/api/reset"
+  to = "/.netlify/functions/reset"
+  status = 200
+
+[[redirects]]
+  from = "/api/export"
+  to = "/.netlify/functions/export"
+  status = 200
+
+[[redirects]]
+  from = "/api/import"
+  to = "/.netlify/functions/import"
+  status = 200
