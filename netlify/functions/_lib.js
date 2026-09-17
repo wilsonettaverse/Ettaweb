@@ -9,11 +9,17 @@ const { getStore } = require('@netlify/blobs');
 const ADMIN_NAME = 'Wilson';
 const TOKEN_TTL_MS = 30 * 24 * 3600 * 1000; // 30 days
 
+// Note: 'strong' consistency requires an edge URL this classic (Lambda-
+// compatibility) function runtime doesn't always get from Netlify, which
+// throws "not configured with a 'uncachedEdgeURL' property". Default
+// (eventual) consistency avoids that; for a small internal tool the brief
+// read-after-write propagation delay (seconds, not the old per-browser
+// storage) is an acceptable trade-off.
 function dataStore() {
-  return getStore({ name: 'codex-data', consistency: 'strong' });
+  return getStore({ name: 'codex-data' });
 }
 function imageStore() {
-  return getStore({ name: 'codex-images', consistency: 'strong' });
+  return getStore({ name: 'codex-images' });
 }
 
 async function getSecret() {
