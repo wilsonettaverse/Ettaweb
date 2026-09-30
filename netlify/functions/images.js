@@ -22,11 +22,14 @@ exports.handler = async (event) => {
     await imageStore().set(id, parsed.bytes, { metadata: { contentType: parsed.contentType, charId: body.charId, name: name } });
     const metaArr = await getImagesMeta();
     const i = metaArr.findIndex(function (x) { return x.id === id; });
-    const entry = { id: id, charId: body.charId, name: name, ts: ts };
+    // 'by' is the authenticated session's own name, never trusted from the request body,
+    // so the upload-history attribution can't be spoofed by the client.
+    const by = session.name;
+    const entry = { id: id, charId: body.charId, name: name, ts: ts, by: by };
     if (i >= 0) metaArr[i] = entry;
     else metaArr.push(entry);
     await setImagesMeta(metaArr);
-    return json(200, { id: id, charId: body.charId, name: name, ts: ts, data: '/api/image?id=' + encodeURIComponent(id) });
+    return json(200, { id: id, charId: body.charId, name: name, ts: ts, by: by, data: '/api/image?id=' + encodeURIComponent(id) });
   }
 
   if (event.httpMethod === 'DELETE') {

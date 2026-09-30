@@ -263,7 +263,15 @@ img{max-width:100%; display:block}
 .thumb-item .star{position:absolute; bottom:3px; left:3px; width:20px; height:20px; border-radius:50%; border:none;
   background:rgba(22,33,27,.55); color:#fff; font-size:11px; cursor:pointer; display:flex; align-items:center; justify-content:center}
 .thumb-item.primary .star{background:var(--accent)}
+.thumb-card{display:flex; flex-direction:column; gap:4px}
+.thumb-cap{font-family:var(--mono); font-size:10px; color:var(--bark); line-height:1.2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .editor-actions{display:flex; gap:8px; margin-top:16px}
+.history-block{margin-top:16px}
+.history-list{list-style:none; margin:8px 0 0; padding:0; max-height:220px; overflow-y:auto; display:flex; flex-direction:column; gap:6px}
+.history-list li{font-size:12px; line-height:1.4; border-left:2px solid var(--line-2); padding-left:9px}
+.history-list .hist-who{font-weight:600}
+.history-list .hist-when{font-family:var(--mono); font-size:10px; color:var(--bark)}
+.history-empty{font-size:12px; color:var(--bark)}
 
 /* toast */
 .toast{position:fixed; bottom:22px; left:50%; transform:translateX(-50%) translateY(20px); z-index:80;
@@ -914,6 +922,9 @@ function sprintNums(){return SPRINT_DEFS.map(function(s){return s.n;});}
 function sprintName(n){for(var i=0;i<SPRINT_DEFS.length;i++)if(SPRINT_DEFS[i].n===n)return SPRINT_DEFS[i].name;return 'Sprint '+n;}
 function sprintDef(n){for(var i=0;i<SPRINT_DEFS.length;i++)if(SPRINT_DEFS[i].n===n)return SPRINT_DEFS[i];return null;}
 function fmtD(d){if(!d)return '';var p=String(d).split('-');return p.length===3?(p[2]+'/'+p[1]+'/'+p[0].slice(2)):d;}
+var MONTHS_SHORT=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtTS(ts){if(!ts)return '';var d=new Date(ts);var h=d.getHours(),m=d.getMinutes(),ap=h>=12?'PM':'AM',h12=h%12||12;
+  return MONTHS_SHORT[d.getMonth()]+' '+d.getDate()+', '+h12+':'+(m<10?'0':'')+m+ap;}
 function sprintDates(n){var s=sprintDef(n);if(!s||(!s.start&&!s.end))return '';if(s.start&&s.end)return fmtD(s.start)+' \u2013 '+fmtD(s.end);return fmtD(s.start||s.end);}
 function firstSprint(){return (SPRINT_DEFS[0]&&SPRINT_DEFS[0].n)||1;}
 function saveSprints(){return setSetting('sprints',SPRINT_DEFS);}
@@ -1617,11 +1628,11 @@ function showGuide(){var back=h('<div class="modal-back"></div>');
 
 /* ---------- editor ---------- */
 var edit=null;
-function blankChar(){return{id:null,clan:'aranyani',num:'',name:'',mana:0,arch:'Support',type:'Magic',tier:'Basic',sprint:firstSprint(),gender:'',height:'',l1:'',l6:'',l12:'',abilities:[],images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',completed:false,review:{status:'',count:0,redos:0}};}
+function blankChar(){return{id:null,clan:'aranyani',num:'',name:'',mana:0,arch:'Support',type:'Magic',tier:'Basic',sprint:firstSprint(),gender:'',height:'',l1:'',l6:'',l12:'',abilities:[],images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',completed:false,review:{status:'',count:0,redos:0},history:[]};}
 function startEdit(id){if(!id&&!isAdmin())return;if(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
     edit={id:c.id,clan:c.clan,num:c.num,name:c.name,mana:c.mana,arch:c.arch,type:c.type,tier:c.tier,sprint:c.sprint||1,gender:c.gender||'',height:c.height||'',l1:c.l1,l6:c.l6,l12:c.l12,
-      abilities:c.abilities.slice(),images:(IMAGES[c.id]||[]).map(function(im){return{id:im.id,name:im.name,data:im.data,existing:true};}),
-      primaryId:c.primaryImageId,status:Object.assign(defStatus(),c.status||{}),modeledBy:modeledOf(c),texturedBy:texturedOf(c),completed:isDone(c)};
+      abilities:c.abilities.slice(),images:(IMAGES[c.id]||[]).map(function(im){return{id:im.id,name:im.name,data:im.data,by:im.by||null,ts:im.ts,existing:true};}),
+      primaryId:c.primaryImageId,status:Object.assign(defStatus(),c.status||{}),modeledBy:modeledOf(c),texturedBy:texturedOf(c),completed:isDone(c),history:(c.history||[]).slice()};
   }else edit=blankChar();
   renderEditor(edit);el('editorMount').scrollIntoView({behavior:'smooth',block:'nearest'});}
 function userOpts(val){return '<option value="">\u2014 unassigned \u2014</option>'+USERS.map(function(u){return '<option'+(val===u.name?' selected':'')+'>'+esc(u.name)+'</option>';}).join('');}
@@ -1651,6 +1662,7 @@ function renderEditor(e){var mount=el('editorMount');if(!mount)return;
     +'<label class="statbox done-toggle"><input type="checkbox" id="fDone"'+(e.completed?' checked':'')+'> <b>Mark this character as completed</b></label>'
     +(e.id?reviewBlock(e.id):'')
     +'<div class="field"><label>Images ('+e.images.length+')</label><div class="dropzone" id="dz"><div class="dz-glyph">\u21ea</div><p>Drop images or click to browse — multiple allowed</p></div><input type="file" id="fImgs" accept="image/*" multiple hidden><div class="thumbs" id="imgThumbs"></div><div class="hint">Star = primary (card image). Large images are auto-resized.</div></div>'
+    +historyBlock(e.history)
     +'<div class="editor-actions"><button class="btn accent" id="edSave">Save unit</button>'+(e.id?'<button class="btn danger" id="edDel">Delete</button>':'')+'<button class="btn ghost" id="edCancel">Cancel</button></div></div>';
   bindF('fName','name');bindF('fClan','clan');bindF('fSprint','sprint',true);bindF('fArch','arch');bindF('fType','type');bindF('fTier','tier');bindF('fNum','num',true);bindF('fMana','mana',true);bindF('fL1','l1');bindF('fL6','l6');bindF('fL12','l12');
   bindF('fGender','gender');bindF('fHeight','height');
@@ -1678,36 +1690,82 @@ function reviewBlock(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)
 function bindReview(scope){(scope||document).querySelectorAll('[data-review]').forEach(function(b){b.addEventListener('click',function(){reviewAct(b.getAttribute('data-rid'),b.getAttribute('data-review'));});});}
 function renderStatusEditor(e,mount){var m=CLAN_META[e.clan];var img=null;var c=CHARS.find(function(x){return x.id===e.id;});if(c)img=primaryOf(c);var editable=canStatus();var dis=editable?'':' disabled';
   var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-st="'+st.key+'"'+(e.status[st.key]?' checked':'')+dis+'> '+esc(st.label)+'</label>';}).join('');
-  mount.innerHTML='<div class="editor"><h3>'+(editable?'Update status':'View')+'</h3><div class="esub">'+(canReview()?'Review and update production status':editable?'You can update production status only':'Read-only ('+esc(myRole())+')')+'</div>'
+  mount.innerHTML='<div class="editor"><h3>'+(editable?'Update status':'View')+'</h3><div class="esub">'+(canReview()?'Review and update production status':editable?'You can update production status and add images':'Read-only ('+esc(myRole())+')')+'</div>'
     +'<div class="se-head"><div class="se-thumb">'+(img?'<img src="'+img.data+'">':esc(e.name.charAt(0)))+'</div><div><div class="se-name">'+esc(e.name)+(e.completed?' <span class="done-chip sm">\u2713</span>':'')+'</div><div class="se-meta"><span class="clan-dot" style="background:'+m.accent+'"></span>'+esc(m.name)+' · #'+e.num+' · Sprint '+(e.sprint||1)+' · '+esc(e.arch)+' · '+esc(e.type)+'</div></div></div>'
     +'<div class="se-assign"><span>Modeled by <b>'+esc(e.modeledBy||'\u2014')+'</b></span><span>Textured by <b>'+esc(e.texturedBy||'\u2014')+'</b></span></div>'
     +'<div class="field"><label>Production status</label><div class="statboxes">'+statusBoxes+'</div></div>'
     +'<label class="statbox done-toggle"><input type="checkbox" id="fDone"'+(e.completed?' checked':'')+dis+'> <b>Mark this character as completed</b></label>'
     +reviewBlock(e.id)
+    +(editable?'<div class="field"><label>Images ('+e.images.length+')</label><div class="dropzone" id="dz"><div class="dz-glyph">\u21ea</div><p>Drop images or click to browse — multiple allowed</p></div><input type="file" id="fImgs" accept="image/*" multiple hidden><div class="thumbs" id="imgThumbs"></div><div class="hint">Star = primary (card image). Large images are auto-resized.</div></div>':'')
+    +historyBlock(e.history)
     +'<div class="editor-actions">'+(editable?'<button class="btn accent" id="edSaveStatus">Save status</button>':'')+'<button class="btn ghost" id="edCancel">Close</button></div></div>';
   if(editable){mount.querySelectorAll('[data-st]').forEach(function(cb){cb.addEventListener('change',function(){if(!edit)return;edit.status[cb.getAttribute('data-st')]=cb.checked;});});
     var fd=el('fDone');if(fd)fd.addEventListener('change',function(){if(!edit)return;edit.completed=fd.checked;});
+    paintThumbs();
+    var dz=el('dz'),fi=el('fImgs');
+    dz.addEventListener('click',function(){fi.click();});
+    dz.addEventListener('dragover',function(ev){ev.preventDefault();dz.classList.add('over');});
+    dz.addEventListener('dragleave',function(){dz.classList.remove('over');});
+    dz.addEventListener('drop',function(ev){ev.preventDefault();dz.classList.remove('over');addFiles(ev.dataTransfer.files);});
+    fi.addEventListener('change',function(){addFiles(this.files);this.value='';});
     var ss=el('edSaveStatus');if(ss)ss.addEventListener('click',saveStatusOnly);}
   bindReview(mount);
   el('edCancel').addEventListener('click',function(){edit=null;renderEditor(null);});}
+function imageOps(id){var existing=(IMAGES[id]||[]).map(function(im){return im.id;}),keep=edit.images.map(function(im){return im.id;}),ops=[];
+  existing.forEach(function(eid){if(keep.indexOf(eid)<0)ops.push(delImg(eid));});
+  edit.images.forEach(function(im,idx){if(existing.indexOf(im.id)<0)ops.push(putImg({id:im.id,charId:id,name:im.name,data:im.data,ts:Date.now()+idx}));});
+  return ops;}
+/* ---------- change history (who updated what) ---------- */
+function pushHistory(c,note){if(!note)return;c.history=(c.history||[]).slice();c.history.unshift({ts:Date.now(),user:CURRENT_USER||'Unknown',action:note});if(c.history.length>40)c.history.length=40;}
+function historyNote(oldStatus,newStatus,oldCompleted,newCompleted,added,removed){var parts=[];
+  STAGES.forEach(function(st){if(!!oldStatus[st.key]!==!!newStatus[st.key])parts.push((newStatus[st.key]?'marked ':'unmarked ')+st.ab);});
+  if(!!oldCompleted!==!!newCompleted)parts.push(newCompleted?'marked completed':'marked not completed');
+  if(added)parts.push('added '+added+' image'+(added>1?'s':''));
+  if(removed)parts.push('removed '+removed+' image'+(removed>1?'s':''));
+  return parts.join(', ');}
+function historyBlock(hist){hist=hist||[];if(!hist.length)return '<div class="field history-block"><label>History</label><div class="history-empty">No changes recorded yet.</div></div>';
+  var items=hist.slice(0,15).map(function(h){return '<li><span class="hist-who">'+esc(h.user||'Unknown')+'</span> — '+esc(h.action)+'<br><span class="hist-when">'+fmtTS(h.ts)+'</span></li>';}).join('');
+  return '<div class="field history-block"><label>History · who updated what</label><ul class="history-list">'+items+'</ul></div>';}
 function saveStatusOnly(){if(!edit||!edit.id)return;var c=CHARS.find(function(x){return x.id===edit.id;});if(!c)return;
+  var oldStatus=Object.assign(defStatus(),c.status||{}),oldCompleted=isDone(c),oldImgIds=(IMAGES[edit.id]||[]).map(function(im){return im.id;});
   c.status=Object.assign(defStatus(),edit.status);c.completed=!!edit.completed;c.updatedAt=Date.now();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast('Status updated');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
+  var ops=imageOps(edit.id);
+  c.primaryImageId=edit.primaryId;if(c.primaryImageId==null&&edit.images.length)c.primaryImageId=edit.images[0].id;
+  var newImgIds=edit.images.map(function(im){return im.id;});
+  var added=newImgIds.filter(function(iid){return oldImgIds.indexOf(iid)<0;}).length;
+  var removed=oldImgIds.filter(function(iid){return newImgIds.indexOf(iid)<0;}).length;
+  pushHistory(c,historyNote(oldStatus,c.status,oldCompleted,c.completed,added,removed));
+  ops.push(putChar(c));
+  Promise.all(ops).then(loadCaches).then(function(){syncUpsert(c);toast('Status updated');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
 function paintThumbs(){var mount=el('imgThumbs');if(!mount)return;if(!edit.images.length){mount.innerHTML='<div class="hint" style="grid-column:1/-1">No images yet.</div>';return;}
-  mount.innerHTML=edit.images.map(function(im,i){var isP=(edit.primaryId?edit.primaryId===im.id:i===0);return '<div class="thumb-item'+(isP?' primary':'')+'"><img src="'+im.data+'"><button class="rm" data-rm="'+i+'">\u00d7</button><button class="star" data-star="'+i+'">\u2605</button></div>';}).join('');
+  mount.innerHTML=edit.images.map(function(im,i){var isP=(edit.primaryId?edit.primaryId===im.id:i===0);
+    var cap=im.by?('<div class="thumb-cap">'+esc(im.by)+(im.ts?' \u00b7 '+fmtTS(im.ts):'')+'</div>'):'';
+    return '<div class="thumb-card"><div class="thumb-item'+(isP?' primary':'')+'"><img src="'+im.data+'"><button class="rm" data-rm="'+i+'">\u00d7</button><button class="star" data-star="'+i+'">\u2605</button></div>'+cap+'</div>';}).join('');
   mount.querySelectorAll('[data-rm]').forEach(function(b){b.addEventListener('click',function(){var i=+b.getAttribute('data-rm'),rm=edit.images.splice(i,1)[0];if(rm&&edit.primaryId===rm.id)edit.primaryId=edit.images.length?edit.images[0].id:null;paintThumbs();});});
   mount.querySelectorAll('[data-star]').forEach(function(b){b.addEventListener('click',function(){edit.primaryId=edit.images[+b.getAttribute('data-star')].id;paintThumbs();});});}
 function addFiles(files){if(!edit)return;var arr=Array.prototype.slice.call(files).filter(function(f){return /^image\//.test(f.type);});if(!arr.length)return;
-  Promise.all(arr.map(function(f){return resizeImage(f).then(function(d){if(edit)edit.images.push({id:uid(),name:f.name,data:d,existing:false});});})).then(function(){if(!edit)return;if(!edit.primaryId&&edit.images.length)edit.primaryId=edit.images[0].id;paintThumbs();});}
+  Promise.all(arr.map(function(f){return resizeImage(f).then(function(d){if(edit)edit.images.push({id:uid(),name:f.name,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false});});})).then(function(){if(!edit)return;if(!edit.primaryId&&edit.images.length)edit.primaryId=edit.images[0].id;paintThumbs();});}
 function resizeImage(file,max){max=max||900;return new Promise(function(res){var r=new FileReader();r.onload=function(){var img=new Image();img.onload=function(){var w=img.width,hh=img.height,sc=Math.min(1,max/Math.max(w,hh)),cw=Math.round(w*sc),ch=Math.round(hh*sc);var cv=document.createElement('canvas');cv.width=cw;cv.height=ch;cv.getContext('2d').drawImage(img,0,0,cw,ch);try{res(cv.toDataURL('image/jpeg',0.85));}catch(e){res(r.result);}};img.onerror=function(){res(r.result);};img.src=r.result;};r.readAsDataURL(file);});}
 function parseStats(s){if(!s)return null;var p=String(s).split('/');if(p.length!==4)return null;var o=p.map(function(x){return parseInt(x,10);});return o.some(isNaN)?null:o;}
 function saveEdit(){if(!edit.name||!String(edit.name).trim()){toast('Name is required');return;}
+  var oldC=edit.id?CHARS.find(function(x){return x.id===edit.id;}):null;
   var id=edit.id||(edit.clan+'-new-'+uid());
-  var rec={id:id,clan:edit.clan,num:Number(edit.num)||0,name:String(edit.name).trim(),mana:Number(edit.mana)||0,arch:edit.arch,type:edit.type,tier:edit.tier,sprint:Number(edit.sprint)||1,gender:edit.gender||'',height:edit.height||'',l1:edit.l1,l6:edit.l6,l12:edit.l12,stats:parseStats(edit.l12),abilities:edit.abilities.slice(),status:Object.assign(defStatus(),edit.status),modeledBy:edit.modeledBy||'',texturedBy:edit.texturedBy||'',completed:!!edit.completed,primaryImageId:edit.primaryId,updatedAt:Date.now()};
-  var existing=(IMAGES[id]||[]).map(function(im){return im.id;}),keep=edit.images.map(function(im){return im.id;}),ops=[];
-  existing.forEach(function(eid){if(keep.indexOf(eid)<0)ops.push(delImg(eid));});
-  edit.images.forEach(function(im,idx){if(existing.indexOf(im.id)<0)ops.push(putImg({id:im.id,charId:id,name:im.name,data:im.data,ts:Date.now()+idx}));});
+  var rec={id:id,clan:edit.clan,num:Number(edit.num)||0,name:String(edit.name).trim(),mana:Number(edit.mana)||0,arch:edit.arch,type:edit.type,tier:edit.tier,sprint:Number(edit.sprint)||1,gender:edit.gender||'',height:edit.height||'',l1:edit.l1,l6:edit.l6,l12:edit.l12,stats:parseStats(edit.l12),abilities:edit.abilities.slice(),status:Object.assign(defStatus(),edit.status),modeledBy:edit.modeledBy||'',texturedBy:edit.texturedBy||'',completed:!!edit.completed,primaryImageId:edit.primaryId,updatedAt:Date.now(),history:(oldC&&oldC.history)?oldC.history.slice():[]};
+  var ops=imageOps(id);
   if(rec.primaryImageId==null&&edit.images.length)rec.primaryImageId=edit.images[0].id;
+  var newImgIds=edit.images.map(function(im){return im.id;});
+  if(!oldC){
+    var parts=['created this character'];
+    if(edit.images.length)parts.push('added '+edit.images.length+' image'+(edit.images.length>1?'s':''));
+    pushHistory(rec,parts.join(', '));
+  }else{
+    var oldStatus=Object.assign(defStatus(),oldC.status||{}),oldCompleted=isDone(oldC),oldImgIds=(IMAGES[oldC.id]||[]).map(function(im){return im.id;});
+    var added=newImgIds.filter(function(iid){return oldImgIds.indexOf(iid)<0;}).length;
+    var removed=oldImgIds.filter(function(iid){return newImgIds.indexOf(iid)<0;}).length;
+    var note=historyNote(oldStatus,rec.status,oldCompleted,rec.completed,added,removed);
+    if(oldC.name!==rec.name)note=(note?note+', ':'')+'renamed to "'+rec.name+'"';
+    pushHistory(rec,note);
+  }
   ops.push(putChar(rec));
   Promise.all(ops).then(loadCaches).then(function(){syncUpsert(rec);toast(edit.id?'Unit updated':'Unit created');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Save failed: '+err);});}
 function deleteEdit(){if(!edit.id)return;if(!confirm('Delete "'+edit.name+'" and its images?'))return;var id=edit.id,ops=[delChar(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
@@ -1740,7 +1798,8 @@ function renderLogin(){
     +'<p class="auth-note">Admins manage the roster, team &amp; access. Reviewers approve or reject work. Artists update production status. Viewers can look but not change.</p></div></div>';
   APP.querySelectorAll('[data-pick]').forEach(function(b){b.addEventListener('click',function(){var name=b.getAttribute('data-pick');
     if(name===ADMIN_NAME){userSetLS(ADMIN_NAME);renderUserWidget();if(AUTHED)renderDashboard();else renderAdminLogin();return;}
-    var u=findUser(name);if(u&&u.hash){pendingUser=name;renderUserPwLogin(u);}else{userSetLS(name);renderUserWidget();toast('Signed in as '+name);renderDashboard();}});});
+    var u=findUser(name);if(u&&u.hash){pendingUser=name;renderUserPwLogin(u);}else{userSetLS(name);renderUserWidget();toast('Signing in…');
+      api('auth/login',{method:'POST',body:{name:name}}).then(function(r){userTokenSet(name,r.token,Date.now()+29*24*3600*1000);toast('Signed in as '+name);renderDashboard();}).catch(function(){toast('Signed in as '+name+' (offline — changes may not save)');renderDashboard();});}});});
   window.scrollTo(0,0);}
 function renderUserPwLogin(u){APP.innerHTML='<div class="auth-wrap"><div class="auth-card"><div class="lockicon">\ud83d\udd12</div><h1>'+esc(u.name)+'</h1><p class="sub">This account is password-protected \u00b7 '+esc(u.role)+'.</p>'
   +'<div class="field"><label>Password</label><input id="upPw" type="password" placeholder="Your password"></div><div class="auth-err" id="upErr"></div>'

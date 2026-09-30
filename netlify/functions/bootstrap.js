@@ -15,7 +15,7 @@ exports.handler = async (event) => {
       getSettingRaw('auth')
     ]);
     const images = imagesMeta.map(function (m) {
-      return { id: m.id, charId: m.charId, name: m.name, ts: m.ts, data: '/api/image?id=' + encodeURIComponent(m.id) };
+      return { id: m.id, charId: m.charId, name: m.name, ts: m.ts, by: m.by || null, data: '/api/image?id=' + encodeURIComponent(m.id) };
     });
     return json(200, {
       characters: characters,
