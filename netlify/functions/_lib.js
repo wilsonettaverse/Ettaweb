@@ -128,6 +128,35 @@ function parseDataUrl(dataUrl) {
   return { contentType: m[1], bytes: Buffer.from(m[2], 'base64') };
 }
 
+// 6-digit numeric code for the admin password-recovery flow.
+function genCode() {
+  return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+}
+
+// Sends a transactional email via Resend (https://resend.com). Requires the
+// RESEND_API_KEY environment variable (set in Netlify's env vars — never
+// committed to source). Throws if unset or if the API call fails, so callers
+// should catch rather than let a misconfigured key break the whole request.
+async function sendEmail(to, subject, html) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) throw new Error('RESEND_API_KEY not configured');
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: 'Character Codex <onboarding@resend.dev>',
+      to: [to],
+      subject: subject,
+      html: html
+    })
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(function () { return ''; });
+    throw new Error('Resend error ' + res.status + ': ' + text);
+  }
+  return res.json();
+}
+
 module.exports = {
   ADMIN_NAME,
   TOKEN_TTL_MS,
@@ -147,5 +176,7 @@ module.exports = {
   getSettingRaw,
   setSettingRaw,
   parseDataUrl,
+  genCode,
+  sendEmail,
   connectLambda: require('@netlify/blobs').connectLambda
 };

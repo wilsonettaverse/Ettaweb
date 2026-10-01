@@ -2,7 +2,9 @@ const { connectLambda, setSettingRaw, requireSession, json } = require('./_lib')
 
 // 'auth' (the admin password hash) can only be changed via the dedicated
 // auth/set-password endpoint, never through this generic settings write.
-const BLOCKED_KEYS = ['auth'];
+// 'resetCode' (the salted hash of an in-flight recovery code) is likewise
+// only ever written by the auth-forgot-password / auth-reset-password pair.
+const BLOCKED_KEYS = ['auth', 'resetCode'];
 
 exports.handler = async (event) => {
   connectLambda(event);

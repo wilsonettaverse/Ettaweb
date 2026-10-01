@@ -949,7 +949,7 @@ function lightenHex(hex,amt){hex=String(hex||'#888888').replace('#','');if(hex.l
 function saveClans(){return setSetting('clans',{order:CLAN_ORDER.slice(),meta:JSON.parse(JSON.stringify(CLAN_META))});}
 
 var CHARS=[], IMAGES={};
-var APP, MEM=false, SHEET_URL='';
+var APP, MEM=false, SHEET_URL='', ADMIN_EMAIL='';
 var ROLES=['Admin','Reviewer','Artist','Viewer'];
 var DEFAULT_USERS=[{name:'Wilson',role:'Admin'},{name:'Shridhar',role:'Artist'},{name:'Arvind',role:'Artist'},{name:'Abhyuday',role:'Artist'},{name:'Abhiji',role:'Artist'}];
 var USERS=DEFAULT_USERS.slice(), CURRENT_USER='', pendingUser='';
@@ -1526,6 +1526,9 @@ function renderSettingsInner(mount){if(!mount)return;
     +'<div class="field"><label>Google Sheet sync — Apps Script Web App URL</label><input id="setSheet" type="url" placeholder="https://script.google.com/macros/s/……/exec" value="'+esc(SHEET_URL)+'"><div class="hint">Every add / edit / status change is pushed to your sheet, <b>including the character\u2019s first image</b>. One-way (app \u2192 sheet). Paste the <b>Apps Script Web App URL</b> (ends in <b>/exec</b>) — not the spreadsheet link. See the setup guide.</div></div>'
     +'<div class="panel-row"><button class="btn accent sm" id="setSaveSheet">Save URL</button><button class="btn ghost sm" id="setSyncAll">Push all rows now</button><button class="btn ghost sm" id="setGuide">Setup guide</button></div>'
     +'<div class="divider"></div>'
+    +'<div class="field"><label>Recovery email</label><input id="setRecEmail" type="email" placeholder="you@example.com" value="'+esc(ADMIN_EMAIL)+'"><div class="hint">If you ever lose the admin password, “Forgot password?” on the login screen emails a one-time code here.</div></div>'
+    +'<div class="panel-row"><button class="btn accent sm" id="setSaveEmail">Save recovery email</button></div>'
+    +'<div class="divider"></div>'
     +'<div class="panel-row"><button class="btn ghost sm" id="setExport">Export JSON backup</button><label class="btn ghost sm" style="cursor:pointer">Import JSON<input type="file" id="setImp" accept="application/json" hidden></label><button class="btn ghost sm" id="setChangePw">Change admin password</button><button class="btn danger sm" id="setReset">Reset to defaults</button></div>'
     +'<div id="pwMount"></div>'
     +'<div class="divider"></div><div id="clansMount"></div><div class="divider"></div><div id="sprintsMount"></div>'
@@ -1535,6 +1538,7 @@ function renderSettingsInner(mount){if(!mount)return;
     SHEET_URL=v;setSetting('sheetUrl',SHEET_URL).then(function(){toast(SHEET_URL?'Sheet URL saved':'Sheet URL cleared');});});
   el('setSyncAll').addEventListener('click',function(){SHEET_URL=el('setSheet').value.trim();setSetting('sheetUrl',SHEET_URL).then(syncAll);});
   el('setGuide').addEventListener('click',showGuide);
+  el('setSaveEmail').addEventListener('click',function(){var v=el('setRecEmail').value.trim();ADMIN_EMAIL=v;setSetting('adminEmail',ADMIN_EMAIL).then(function(){toast(ADMIN_EMAIL?'Recovery email saved':'Recovery email cleared');});});
   el('setExport').addEventListener('click',exportData);
   el('setImp').addEventListener('change',importData);
   el('setChangePw').addEventListener('click',showPwPanel);
@@ -1816,11 +1820,28 @@ function renderAdminLogin(){var locked=Date.now()<lockUntil;APP.innerHTML='<div 
   +'<div class="field"><label>Password</label><input id="liPw" type="password" placeholder="Admin password"'+(locked?' disabled':'')+'></div><div class="auth-err" id="liErr">'+(locked?'Too many attempts \u2014 wait a moment.':'')+'</div>'
   +'<button class="btn accent" id="liGo" style="width:100%"'+(locked?' disabled':'')+'>Unlock dashboard</button>'
   +'<button class="btn ghost" id="liBack" style="width:100%;margin-top:8px">\u2039 Sign in as someone else</button>'
-  +'<p class="auth-note">No recovery for a local password. Clear this file\u2019s site data to reset it (your roster survives if you Exported a backup).</p></div></div>';
+  +'<button class="btn ghost" id="liForgot" style="width:100%;margin-top:8px">Forgot password?</button>'
+  +'<div id="fpMount"></div>'
+  +'<p class="auth-note">Recovery codes go to the email set as the recovery address in Settings (once you\u2019re signed in). No recovery address set yet? Your roster still survives if you Exported a backup.</p></div></div>';
   function s(){if(Date.now()<lockUntil)return;var p=el('liPw').value;
     api('auth/login',{method:'POST',body:{name:ADMIN_NAME,password:p}}).then(function(r){failCount=0;adminTokenSet(r.token);AUTHED=true;userSetLS(ADMIN_NAME);renderUserWidget();toast('Signed in as Wilson (admin)');renderDashboard();}).catch(function(){failCount++;if(failCount>=5){lockUntil=Date.now()+30000;el('liErr').textContent='Too many attempts \u2014 locked 30s.';setTimeout(function(){if(location.hash.indexOf('dashboard')>=0)renderAdminLogin();},30000);}else el('liErr').textContent='Incorrect password ('+failCount+'/5).';});}
   el('liGo').addEventListener('click',s);el('liBack').addEventListener('click',function(){userSetLS('');AUTHED=false;adminTokenSet('');renderUserWidget();renderLogin();});
+  el('liForgot').addEventListener('click',showForgotPanel);
   var pw=el('liPw');if(pw){pw.focus();pw.addEventListener('keydown',function(e){if(e.key==='Enter')s();});}window.scrollTo(0,0);}
+function showForgotPanel(){var mount=el('fpMount');if(!mount)return;if(mount.dataset.open){mount.dataset.open='';mount.innerHTML='';return;}mount.dataset.open='1';
+  mount.innerHTML='<div class="panel" style="margin-top:10px"><p class="hint" style="margin:0 0 8px">We\u2019ll email a one-time code to the recovery address set in Settings.</p>'
+    +'<div class="panel-row"><button class="btn accent sm" id="fpSend">Email me a code</button></div>'
+    +'<div id="fpStep2" style="display:none;margin-top:10px"><div class="grid-pw"><div class="field" style="margin:0"><label>Code</label><input id="fpCode" maxlength="6" inputmode="numeric"></div><div class="field" style="margin:0"><label>New password</label><input id="fpNew" type="password"></div><div class="field" style="margin:0"><label>Confirm</label><input id="fpNew2" type="password"></div><button class="btn accent" id="fpGo">Reset &amp; sign in</button></div></div>'
+    +'<p class="hint" id="fpMsg" style="margin:8px 0 0;min-height:16px"></p><div class="auth-err" id="fpErr"></div></div>';
+  el('fpSend').addEventListener('click',function(){el('fpErr').textContent='';el('fpMsg').textContent='Sending\u2026';
+    api('auth/forgot-password',{method:'POST',body:{}}).then(function(r){
+      if(r&&r.sent){el('fpMsg').textContent='Code sent \u2014 check your email. It expires in 15 minutes.';el('fpStep2').style.display='';}
+      else{el('fpMsg').textContent='';el('fpErr').textContent=(r&&r.reason)||'No recovery email is configured yet.';}
+    }).catch(function(){el('fpMsg').textContent='';el('fpErr').textContent='Could not request a code \u2014 try again.';});});
+  el('fpGo').addEventListener('click',function(){var c=el('fpCode').value.trim(),n=el('fpNew').value,n2=el('fpNew2').value;el('fpErr').textContent='';
+    if(n.length<4){el('fpErr').textContent='New password needs at least 4 characters.';return;}
+    if(n!==n2){el('fpErr').textContent='New passwords do not match.';return;}
+    api('auth/reset-password',{method:'POST',body:{code:c,newPassword:n}}).then(function(r){adminTokenSet(r.token);AUTHED=true;userSetLS(ADMIN_NAME);renderUserWidget();toast('Password reset \u2014 signed in as Wilson (admin)');renderDashboard();}).catch(function(e){el('fpErr').textContent=(e&&e.message)||'Incorrect or expired code.';});});}
 function signOut(){AUTHED=false;adminTokenSet('');userTokenSet('','');userSetLS('');renderUserWidget();toast('Signed out');route();}
 function showPwPanel(){var mount=el('pwMount');if(!mount)return;if(mount.dataset.open){mount.dataset.open='';mount.innerHTML='';return;}mount.dataset.open='1';
   mount.innerHTML='<div class="panel"><div class="grid-pw"><div class="field" style="margin:0"><label>Current</label><input id="cpOld" type="password"></div><div class="field" style="margin:0"><label>New</label><input id="cpNew" type="password"></div><div class="field" style="margin:0"><label>Confirm</label><input id="cpNew2" type="password"></div><button class="btn accent" id="cpGo">Update</button></div><div class="auth-err" id="cpErr"></div></div>';
@@ -1833,7 +1854,7 @@ function footer(){return '<footer class="wrap foot"><span><b>Etta Global Partner
 
 /* ============================================================ BOOT */
 function boot(){APP=el('app');
-  openDB().then(seedIfEmpty).then(loadCaches).then(function(){HAS_ADMIN_PW=!!REMOTE.settings.hasAdminPassword;var ti=decodeToken(adminTokenGet());AUTHED=!!(ti&&ti.role==='Admin');return getSetting('sheetUrl');}).then(function(u){SHEET_URL=u||'';return getSetting('users');}).then(function(us){USERS=(us&&us.length)?us:DEFAULT_USERS.slice();
+  openDB().then(seedIfEmpty).then(loadCaches).then(function(){HAS_ADMIN_PW=!!REMOTE.settings.hasAdminPassword;var ti=decodeToken(adminTokenGet());AUTHED=!!(ti&&ti.role==='Admin');return getSetting('sheetUrl');}).then(function(u){SHEET_URL=u||'';return getSetting('adminEmail');}).then(function(ae){ADMIN_EMAIL=ae||'';return getSetting('users');}).then(function(us){USERS=(us&&us.length)?us:DEFAULT_USERS.slice();
     USERS=USERS.map(function(u){return typeof u==='string'?{name:u,role:(u===ADMIN_NAME?'Admin':'Artist')}:u;});
     if(!findUser(ADMIN_NAME))USERS.unshift({name:ADMIN_NAME,role:'Admin'});else findUser(ADMIN_NAME).role='Admin';
     return getSetting('sprints');}).then(function(sp){SPRINT_DEFS=(sp&&sp.length)?sp:DEFAULT_SPRINTS.slice();
