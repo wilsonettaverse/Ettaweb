@@ -1,5 +1,5 @@
 // Admin-only: replace the entire shared roster from an uploaded backup JSON.
-const { connectLambda, setCharacters, setImagesMeta, getImagesMeta, imageStore, requireSession, json, parseDataUrl } = require('./_lib');
+const { connectLambda, setCharacters, setTasks, setImagesMeta, getImagesMeta, imageStore, requireSession, json, parseDataUrl } = require('./_lib');
 
 exports.handler = async (event) => {
   connectLambda(event);
@@ -15,6 +15,9 @@ exports.handler = async (event) => {
   }
   const characters = Array.isArray(body.characters) ? body.characters : [];
   const images = Array.isArray(body.images) ? body.images : [];
+  // A backup from before the Tasks feature existed won't have a tasks array —
+  // leave today's tasks alone in that case rather than wiping them out.
+  const hasTasks = Array.isArray(body.tasks);
 
   const oldMeta = await getImagesMeta();
   await Promise.all(oldMeta.map(function (m) { return imageStore().delete(m.id).catch(function () {}); }));
@@ -28,6 +31,7 @@ exports.handler = async (event) => {
   }
 
   await setCharacters(characters);
+  if (hasTasks) await setTasks(body.tasks);
   await setImagesMeta(metaArr);
   return json(200, { ok: true, imported: characters.length });
 };

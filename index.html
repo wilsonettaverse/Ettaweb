@@ -878,7 +878,7 @@ body.on-clan .foot{max-width:1580px}
 <body>
   <nav class="topbar"><div class="topbar-in">
     <a class="brand" href="#/"><b>Character Codex</b><span>Etta Global Partners</span></a>
-    <div class="nav"><a href="#/" data-nav="home">Home</a><a href="#/clan/aranyani" data-nav="clan">Clans</a><a href="#/dashboard" data-nav="dashboard">Dashboard</a><a href="#/pipeline" data-nav="pipeline">Pipeline</a></div>
+    <div class="nav"><a href="#/" data-nav="home">Home</a><a href="#/clan/aranyani" data-nav="clan">Clans</a><a href="#/tasks" data-nav="tasks">Tasks</a><a href="#/dashboard" data-nav="dashboard">Dashboard</a><a href="#/pipeline" data-nav="pipeline">Pipeline</a></div>
     <div class="user-slot" id="userSlot"></div>
   </div></nav>
   <div id="app"></div><div class="toast" id="toast"></div>
@@ -948,7 +948,7 @@ function slugify(s){return (s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').repl
 function lightenHex(hex,amt){hex=String(hex||'#888888').replace('#','');if(hex.length===3)hex=hex.split('').map(function(c){return c+c;}).join('');var r=parseInt(hex.slice(0,2),16),g=parseInt(hex.slice(2,4),16),b=parseInt(hex.slice(4,6),16);function up(x){return Math.round(x+(255-x)*amt);}r=up(r);g=up(g);b=up(b);return '#'+[r,g,b].map(function(x){return ('0'+x.toString(16)).slice(-2);}).join('');}
 function saveClans(){return setSetting('clans',{order:CLAN_ORDER.slice(),meta:JSON.parse(JSON.stringify(CLAN_META))});}
 
-var CHARS=[], IMAGES={};
+var CHARS=[], TASKS=[], IMAGES={};
 var APP, MEM=false, SHEET_URL='', ADMIN_EMAIL='';
 var ROLES=['Admin','Reviewer','Artist','Viewer'];
 var DEFAULT_USERS=[{name:'Wilson',role:'Admin'},{name:'Shridhar',role:'Artist'},{name:'Arvind',role:'Artist'},{name:'Abhyuday',role:'Artist'},{name:'Abhiji',role:'Artist'}];
@@ -986,7 +986,7 @@ function reviewOf(c){return c.review||{status:'',count:0,redos:0};}
    need a signed-in session (see AUTH below). REMOTE mirrors the server; the
    putChar/delChar/putImg/delImg/getSetting/setSetting/allOf functions below
    keep the exact same call signatures the rest of the app already uses. */
-var REMOTE={characters:[],images:[],settings:{}};
+var REMOTE={characters:[],tasks:[],images:[],settings:{}};
 
 function currentToken(){return CURRENT_USER===ADMIN_NAME?adminTokenGet():userTokenGet(CURRENT_USER);}
 function api(path,opts){opts=opts||{};var headers=opts.headers||{};var tk=currentToken();if(tk)headers['Authorization']='Bearer '+tk;
@@ -995,11 +995,13 @@ function api(path,opts){opts=opts||{};var headers=opts.headers||{};var tk=curren
     if(!r.ok)return r.json().catch(function(){return{};}).then(function(j){var e=new Error(j.error||('Request failed ('+r.status+')'));e.status=r.status;throw e;});
     return r.status===204?null:r.json();
   });}
-function refreshRemote(){return api('bootstrap').then(function(d){MEM=false;REMOTE.characters=d.characters||[];REMOTE.images=d.images||[];REMOTE.settings=d.settings||{};});}
+function refreshRemote(){return api('bootstrap').then(function(d){MEM=false;REMOTE.characters=d.characters||[];REMOTE.tasks=d.tasks||[];REMOTE.images=d.images||[];REMOTE.settings=d.settings||{};});}
 function openDB(){return refreshRemote().catch(function(e){MEM=true;toast('Could not reach the server — check your connection');throw e;});}
 function upsertLocal(store,row){var arr=REMOTE[store];var i=arr.findIndex(function(x){return x.id===row.id;});if(i>=0)arr[i]=row;else arr.push(row);}
 function putChar(c){return api('characters',{method:'POST',body:c}).then(function(saved){upsertLocal('characters',saved);return saved;});}
 function delChar(id){return api('characters?id='+encodeURIComponent(id),{method:'DELETE'}).then(function(){REMOTE.characters=REMOTE.characters.filter(function(x){return x.id!==id;});});}
+function putTask(t){return api('tasks',{method:'POST',body:t}).then(function(saved){upsertLocal('tasks',saved);return saved;});}
+function delTask(id){return api('tasks?id='+encodeURIComponent(id),{method:'DELETE'}).then(function(){REMOTE.tasks=REMOTE.tasks.filter(function(x){return x.id!==id;});});}
 function putImg(im){return api('images',{method:'POST',body:im}).then(function(saved){upsertLocal('images',saved);return saved;});}
 function delImg(id){return api('images?id='+encodeURIComponent(id),{method:'DELETE'}).then(function(){REMOTE.images=REMOTE.images.filter(function(x){return x.id!==id;});});}
 function allOf(store){return Promise.resolve((REMOTE[store]||[]).slice());}
@@ -1010,6 +1012,7 @@ function clearStores(){return Promise.resolve();}
 
 function loadCaches(){
   CHARS=REMOTE.characters.slice();CHARS.sort(function(a,b){var ci=CLAN_ORDER.indexOf(a.clan)-CLAN_ORDER.indexOf(b.clan);return ci||a.num-b.num;});
+  TASKS=REMOTE.tasks.slice();TASKS.sort(function(a,b){return (a.createdAt||0)-(b.createdAt||0);});
   IMAGES={};REMOTE.images.forEach(function(im){(IMAGES[im.charId]=IMAGES[im.charId]||[]).push(im);});
   for(var k in IMAGES)IMAGES[k].sort(function(a,b){return a.ts-b.ts;});
   return Promise.resolve();}
@@ -1097,6 +1100,7 @@ function pickUser(u){
 function route(){stopParticles();document.body.classList.remove('on-home');var hash=location.hash.replace(/^#/,'')||'/';var p=hash.split('/').filter(Boolean);
   setActiveNav(p[0]||'home');
   if(p[0]==='clan'&&p[1])return renderClan(p[1]);
+  if(p[0]==='tasks')return renderTasksPage();
   if(p[0]==='dashboard')return renderDashboard();
   if(p[0]==='pipeline')return renderPipeline();
   return renderHome();}
@@ -1203,23 +1207,29 @@ function renderHome(){resetTheme();
   window.scrollTo(0,0);}
 
 /* ============================================================ CLAN VIEW */
-var clanState={search:'',arch:'',type:'',sprint:'',clan:''};
+var clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',clan:''};
 function renderClan(clanId){var m=CLAN_META[clanId];if(!m){location.hash='#/';return;}applyClanTheme(m);
-  clanState={search:'',arch:'',type:'',sprint:'',clan:clanId};
+  clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',clan:clanId};
   var switcher=CLAN_ORDER.map(function(id){return '<a href="#/clan/'+id+'" class="'+(id===clanId?'active':'')+'">'+esc(CLAN_META[id].name)+'</a>';}).join('');
   var sprintChips=SPRINT_DEFS.map(function(s){return '<button class="chip" data-sprint="'+s.n+'" aria-pressed="false" title="'+esc(s.name)+'">Sprint '+s.n+'</button>';}).join('');
   var archChips=ARCHES.map(function(a){return '<button class="chip" data-arch="'+a+'" aria-pressed="false">'+a+'</button>';}).join('');
   var typeChips=TYPES.map(function(t){return '<button class="chip" data-type="'+t+'" aria-pressed="false">'+t+'</button>';}).join('');
+  var modelerOpts='<option value="">All modelers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
+  var texturerOpts='<option value="">All texturers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
   APP.innerHTML='<header class="clan-hero"><div class="wrap wide clan-hero-in">'
     +'<div class="clan-hero-text"><div class="el">'+esc(m.element)+' Clan</div><h1>'+esc(m.name)+'</h1><p>'+esc(m.tag)+'</p></div>'
     +'<div class="clan-glyph">'+clanGlyph(clanId)+'</div></div></header>'
     +'<div class="clan-switch-wrap"><div class="wrap wide"><div class="clan-switch">'+switcher+'</div></div></div>'
     +'<main class="wrap wide">'+memBanner()
     +'<div class="filters"><div class="search"><span class="mono" style="color:var(--bark)">\u2315</span><input id="clanSearch" type="search" placeholder="Search '+esc(m.name)+' units, abilities\u2026"></div>'
-    +'<div class="chipset">'+sprintChips+'</div></div>'
+    +'<label class="filt"><span>Modeler</span><select id="clanModeler" class="filt-sel">'+modelerOpts+'</select></label>'
+    +'<label class="filt"><span>Texturer</span><select id="clanTexturer" class="filt-sel">'+texturerOpts+'</select></label></div>'
+    +'<div class="filters" style="padding-top:0"><div class="chipset">'+sprintChips+'</div></div>'
     +'<div class="filters" style="padding-top:0"><div class="chipset">'+archChips+'</div><div class="chipset">'+typeChips+'</div></div>'
     +'<div class="count-note" id="clanCount"></div><div id="clanBody"></div></main>'+footer();
   el('clanSearch').addEventListener('input',function(){clanState.search=this.value.toLowerCase();paintClan();});
+  el('clanModeler').addEventListener('change',function(){clanState.modeler=this.value;paintClan();});
+  el('clanTexturer').addEventListener('change',function(){clanState.texturer=this.value;paintClan();});
   bindChips('[data-sprint]','sprint',function(v){return v;});
   bindChips('[data-arch]','arch');bindChips('[data-type]','type');
   paintClan();startParticles('.clan-hero',PARTICLE_CFG[clanId]);window.scrollTo(0,0);}
@@ -1228,14 +1238,16 @@ function bindChips(sel,key,map){APP.querySelectorAll(sel).forEach(function(b){b.
   APP.querySelectorAll(sel).forEach(function(x){x.setAttribute('aria-pressed',String(clanState[key])===String(x.getAttribute('data-'+key))?'true':'false');});paintClan();});});}
 function matchClan(c){if(clanState.arch&&c.arch!==clanState.arch)return false;if(clanState.type&&c.type!==clanState.type)return false;
   if(clanState.sprint&&String(c.sprint)!==String(clanState.sprint))return false;
+  if(clanState.modeler&&modeledOf(c)!==clanState.modeler)return false;
+  if(clanState.texturer&&texturedOf(c)!==clanState.texturer)return false;
   if(clanState.search){var s=clanState.search;if(c.name.toLowerCase().indexOf(s)<0&&c.abilities.join(' ').toLowerCase().indexOf(s)<0&&c.arch.toLowerCase().indexOf(s)<0)return false;}return true;}
 function paintClan(){var list=CHARS.filter(function(c){return c.clan===clanState.clan&&matchClan(c);});
   el('clanCount').textContent=list.length+' of 50 units shown';
-  var bySp={};list.forEach(function(c){(bySp[c.sprint||1]=bySp[c.sprint||1]||[]).push(c);});
-  var html='';Object.keys(bySp).map(Number).sort(function(a,b){return a-b;}).forEach(function(sp){var arr=bySp[sp];if(!arr||!arr.length)return;arr.sort(function(a,b){return a.num-b.num;});
-    var done=arr.filter(function(c){return statusDone(c)===4;}).length;
-    html+='<section class="tier"><div class="tier-head"><span class="sprint-badge s'+sp+'">Sprint '+sp+'</span><h2>'+esc(sprintName(sp))+'</h2>'+(sprintDates(sp)?'<span class="sprint-dates">'+esc(sprintDates(sp))+'</span>':'')+'<span class="line"></span><span class="cnt">'+arr.length+' units · '+done+' done</span></div><div class="card-grid">'+arr.map(cardHTML).join('')+'</div></section>';});
-  var body=el('clanBody');body.innerHTML=html||'<div class="empty-state"><div class="glyph">\u2205</div><p>No units match these filters.</p></div>';
+  // Sprint stays a filter (the chips above) rather than an automatic grouping:
+  // the number of characters per sprint isn't fixed, so a flat grid that just
+  // respects whichever filters are active scales better than fixed sections.
+  var body=el('clanBody');
+  body.innerHTML=list.length?'<div class="card-grid">'+list.map(cardHTML).join('')+'</div>':'<div class="empty-state"><div class="glyph">\u2205</div><p>No units match these filters.</p></div>';
   body.querySelectorAll('.ccard').forEach(function(card){card.addEventListener('click',function(){openModal(card.getAttribute('data-id'));});});}
 
 function statBars(stats){if(!stats)return '';var mx=[25,8,8,10],lab=['HP','SH','SP','DM'],cl=['b-hp','b-sh','b-sp','b-dm'];
@@ -1303,6 +1315,74 @@ function openLightbox(gal,idx){if(!gal||!gal.length)return;idx=idx||0;
   if(nx)nx.addEventListener('click',function(e){e.stopPropagation();show(idx+1);});
   document.addEventListener('keydown',key);}
 
+/* ============================================================ TASKS (independent of clans) */
+/* Small jobs — environment art, props, anything that doesn't belong to a clan
+   roster — live in their own TASKS array. They reuse the exact same status /
+   review / history / image machinery as characters (those helpers only look
+   at .id/.status/.review/.modeledBy/.texturedBy/.completed/.primaryImageId,
+   never at clan-specific fields), so nothing above needed to change. */
+var taskState={search:'',category:'',modeler:'',texturer:''};
+function renderTasksPage(){resetTheme();
+  taskState={search:'',category:'',modeler:'',texturer:''};
+  var catSet={};TASKS.forEach(function(t){if(t.category)catSet[t.category]=1;});
+  var catOpts='<option value="">All categories</option>'+Object.keys(catSet).sort().map(function(cat){return '<option>'+esc(cat)+'</option>';}).join('');
+  var modelerOpts='<option value="">All modelers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
+  var texturerOpts='<option value="">All texturers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
+  APP.innerHTML='<header class="hero"><div class="wrap">'+memBanner()
+    +'<div class="studio">Independent work</div>'
+    +'<h1>Tasks</h1>'
+    +'<p>Environment art, props and any other job that isn’t tied to a clan roster.</p></div></header>'
+    +'<main class="wrap">'
+    +'<div class="filters"><div class="search"><span class="mono" style="color:var(--bark)">⌕</span><input id="taskSearch" type="search" placeholder="Search tasks…"></div>'
+    +'<label class="filt"><span>Category</span><select id="taskCategory" class="filt-sel">'+catOpts+'</select></label>'
+    +'<label class="filt"><span>Modeler</span><select id="taskModeler" class="filt-sel">'+modelerOpts+'</select></label>'
+    +'<label class="filt"><span>Texturer</span><select id="taskTexturer" class="filt-sel">'+texturerOpts+'</select></label></div>'
+    +'<div class="count-note" id="taskCount"></div><div id="taskBody"></div></main>'+footer();
+  el('taskSearch').addEventListener('input',function(){taskState.search=this.value.toLowerCase();paintTasksPage();});
+  el('taskCategory').addEventListener('change',function(){taskState.category=this.value;paintTasksPage();});
+  el('taskModeler').addEventListener('change',function(){taskState.modeler=this.value;paintTasksPage();});
+  el('taskTexturer').addEventListener('change',function(){taskState.texturer=this.value;paintTasksPage();});
+  paintTasksPage();startParticles('.hero',PARTICLE_CFG.home);window.scrollTo(0,0);}
+function matchTaskState(t){
+  if(taskState.category&&(t.category||'')!==taskState.category)return false;
+  if(taskState.modeler&&modeledOf(t)!==taskState.modeler)return false;
+  if(taskState.texturer&&texturedOf(t)!==taskState.texturer)return false;
+  if(taskState.search){var s=taskState.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0)return false;}
+  return true;}
+function paintTasksPage(){var list=TASKS.filter(matchTaskState);
+  el('taskCount').textContent=list.length+' task'+(list.length===1?'':'s')+' shown';
+  var body=el('taskBody');
+  body.innerHTML=list.length?'<div class="card-grid">'+list.map(taskCardHTML).join('')+'</div>':'<div class="empty-state"><div class="glyph">∅</div><p>No tasks match these filters.</p></div>';
+  body.querySelectorAll('.ccard').forEach(function(card){card.addEventListener('click',function(){openTaskModal(card.getAttribute('data-tid'));});});}
+function taskCardHTML(t){var img=primaryOf(t),imgs=IMAGES[t.id]||[];
+  var thumb=img?'<img loading="lazy" src="'+img.data+'" alt="'+esc(t.name)+'">'+(imgs.length>1?'<span class="imgcount">'+imgs.length+' imgs</span>':''):'<div class="noimg"><span class="glyph">'+esc(t.name.charAt(0))+'</span><span>no art</span></div>';
+  return '<button class="ccard'+(isDone(t)?' done':'')+'" data-tid="'+t.id+'"><div class="thumb">'+(isDone(t)?'<span class="done-badge">✓ Completed</span>':'')+thumb+'</div>'
+    +'<div class="cbody"><h3 class="cname">'+esc(t.name)+'</h3>'
+    +'<div class="roles">'+(t.category?'<span class="role arch">'+esc(t.category)+'</span>':'<span class="role">Uncategorised</span>')+'</div>'
+    +statusPips(t)+'</div></button>';}
+function openTaskModal(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;var gal=galleryOf(t),s=statusOf(t);
+  var galMain=gal.length?'<div class="gal-main"><img id="galImg" src="'+gal[0].data+'" alt="'+esc(t.name)+'"><button class="gal-expand" id="galExpand" title="View full screen">⛶</button></div>':'<div class="gal-main"><div class="gal-empty"><span class="glyph">'+esc(t.name.charAt(0))+'</span><span class="mono" style="font-size:11px">No art yet</span></div></div>';
+  var thumbs=gal.length>1?'<div class="gal-thumbs">'+gal.map(function(im,i){return '<button data-src="'+im.data+'" data-idx="'+i+'" class="'+(i===0?'active':'')+'"><img src="'+im.data+'" alt=""></button>';}).join('')+'</div>':'';
+  var statusList='<div class="status-track">'+STAGES.map(function(st){return '<div class="strack '+(s[st.key]?'on':'')+'"><span class="tick">'+(s[st.key]?'✓':'○')+'</span>'+esc(st.label)+'</div>';}).join('')+'</div>';
+  var back=h('<div class="modal-back"></div>');
+  back.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="modal-top"><div class="modal-gallery">'+galMain+thumbs+'</div>'
+    +'<div class="modal-info"><div class="el">Task'+(t.category?' · '+esc(t.category):'')+'</div><h2>'+esc(t.name)+(isDone(t)?' <span class="done-chip">✓ Completed</span>':'')+'</h2>'
+    +'<div class="kv"><span class="k">Modeled by <b>'+esc(modeledOf(t)||'—')+'</b></span><span class="k">Textured by <b>'+esc(texturedOf(t)||'—')+'</b></span></div>'
+    +'<div class="kv"><span class="k">Review <b>'+esc(reviewOf(t).status||'—')+'</b></span><span class="k">Reviews received <b>'+reviewOf(t).count+'</b></span><span class="k">Redos <b>'+reviewOf(t).redos+'</b></span></div>'
+    +'<div class="mono" style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--bark);margin:14px 0 6px">Production status</div>'+statusList+'</div></div>'
+    +'<div class="modal-actions"><button class="btn accent" id="mEdit">Edit in dashboard</button><button class="btn ghost" id="mClose">Close</button></div></div>';
+  document.body.appendChild(back);document.body.style.overflow='hidden';
+  function close(){back.remove();document.body.style.overflow='';}
+  back.addEventListener('click',function(e){if(e.target===back)close();});
+  back.querySelector('#mClose').addEventListener('click',close);
+  back.querySelector('#mEdit').addEventListener('click',function(){close();dashTab='tasks';location.hash='#/dashboard';setTimeout(function(){if(el('taskEditorMount'))startEditTask(t.id);},80);});
+  var curIdx=0;
+  var tb=back.querySelectorAll('.gal-thumbs button');tb.forEach(function(b){b.addEventListener('click',function(){curIdx=+b.getAttribute('data-idx');back.querySelector('#galImg').src=b.getAttribute('data-src');tb.forEach(function(x){x.classList.remove('active');});b.classList.add('active');});});
+  var gi=back.querySelector('#galImg'),ge=back.querySelector('#galExpand');
+  if(gi)gi.addEventListener('click',function(){openLightbox(gal,curIdx);});
+  if(ge)ge.addEventListener('click',function(e){e.stopPropagation();openLightbox(gal,curIdx);});
+  document.addEventListener('keydown',function ek(e){if(e.key==='Escape'){close();document.removeEventListener('keydown',ek);}});}
+
 /* ============================================================ DASHBOARD */
 var dash={search:'',clan:'',sprint:'',artist:'',onlyArt:false,view:'list'};
 var dashTab='roster';
@@ -1311,7 +1391,7 @@ function renderDashboard(){resetTheme();
   if(!CURRENT_USER)return renderLogin();
   if(CURRENT_USER===ADMIN_NAME&&!AUTHED)return renderLogin();
   var admin=isAdmin();var role=myRole();
-  var tabs=[{k:'roster',label:'Roster'},{k:'analytics',label:'Analytics'}];
+  var tabs=[{k:'roster',label:'Roster'},{k:'tasks',label:'Tasks'},{k:'analytics',label:'Analytics'}];
   if(admin)tabs=tabs.concat([{k:'home',label:'Front page'},{k:'security',label:'Users & access'},{k:'settings',label:'Settings & sync'}]);
   if(!tabs.some(function(t){return t.k===dashTab;}))dashTab='roster';
   var tabBar='<div class="cr-tabs">'+tabs.map(function(t){return '<button class="cr-tab'+(t.k===dashTab?' on':'')+'" data-tab="'+t.k+'">'+esc(t.label)+'</button>';}).join('')+'</div>';
@@ -1325,6 +1405,7 @@ function renderDashboard(){resetTheme();
   showTab(dashTab);window.scrollTo(0,0);}
 function setTab(t){dashTab=t;APP.querySelectorAll('[data-tab]').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-tab')===t);});showTab(t);}
 function showTab(t){var c=el('crContent');if(!c)return;
+  if(t==='tasks'){c.innerHTML='<div id="taskDashMount"></div>';renderTaskDash(el('taskDashMount'));return;}
   if(t==='analytics'){c.innerHTML='<div id="analyticsMount"></div>';renderAnalytics(el('analyticsMount'));return;}
   if(t==='home'&&isAdmin()){c.innerHTML='<div id="homeMount"></div>';renderHomeEditor();return;}
   if(t==='security'&&isAdmin()){c.innerHTML='<div id="securityMount"></div>';renderSecurity();return;}
@@ -1517,6 +1598,184 @@ function quickDelete(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)
   if(!confirm('Remove "'+c.name+'" and its images? This cannot be undone.'))return;
   var ops=[delChar(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
   Promise.all(ops).then(loadCaches).then(function(){syncDelete(id,c.clan);toast('Unit removed');if(edit&&edit.id===id){edit=null;renderEditor(null);}paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
+
+/* ---------- tasks dashboard tab (independent of clans) ---------- */
+var taskDash={search:'',category:'',artist:'',onlyArt:false};
+function renderTaskDash(c){if(!c)return;var admin=isAdmin();
+  var catSet={};TASKS.forEach(function(t){if(t.category)catSet[t.category]=1;});
+  var catOpts='<option value="">All categories</option>'+Object.keys(catSet).sort().map(function(cat){return '<option'+(taskDash.category===cat?' selected':'')+'>'+esc(cat)+'</option>';}).join('');
+  var artistOpts='<option value="">All assignees</option>'+userNames().map(function(n){return '<option'+(taskDash.artist===n?' selected':'')+'>'+esc(n)+'</option>';}).join('');
+  c.innerHTML='<div class="dash-toolbar">'+(admin?'<button class="btn accent" id="btnNewTask">+ New task</button>':'')
+      +'<div class="search" style="max-width:240px"><span class="mono" style="color:var(--bark)">⌕</span><input id="tSearch" type="search" placeholder="Search tasks…" value="'+esc(taskDash.search)+'"></div>'
+      +'<label class="filt"><span>Category</span><select id="tCategory" class="filt-sel">'+catOpts+'</select></label>'
+      +'<label class="filt"><span>Assignee</span><select id="tArtist" class="filt-sel">'+artistOpts+'</select></label>'
+      +'<label class="chk"><input type="checkbox" id="tArt"'+(taskDash.onlyArt?' checked':'')+'> Only with art</label>'
+      +'</div>'
+    +'<div class="dash-grid"><div><div class="dash-list" id="taskList"></div></div><div id="taskEditorMount"></div></div>';
+  el('tSearch').addEventListener('input',function(){taskDash.search=this.value.toLowerCase();paintTaskList();});
+  el('tCategory').addEventListener('change',function(){taskDash.category=this.value;paintTaskList();});
+  el('tArtist').addEventListener('change',function(){taskDash.artist=this.value;paintTaskList();});
+  el('tArt').addEventListener('change',function(){taskDash.onlyArt=this.checked;paintTaskList();});
+  var bn=el('btnNewTask');if(bn)bn.addEventListener('click',function(){startEditTask(null);});
+  paintTaskList();renderTaskEditor(null);}
+function matchTask(t){
+  if(taskDash.category&&t.category!==taskDash.category)return false;
+  if(taskDash.onlyArt&&!(IMAGES[t.id]||[]).length)return false;
+  if(taskDash.artist&&modeledOf(t)!==taskDash.artist&&texturedOf(t)!==taskDash.artist)return false;
+  if(taskDash.search){var s=taskDash.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0)return false;}
+  return true;}
+function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canStatus();var list=TASKS.filter(matchTask);
+  if(!list.length){mount.innerHTML='<div class="empty-state"><div class="glyph">∅</div><p>No tasks match. Adjust the search or filters above, or add one.</p></div>';return;}
+  function revTag(t){var r=reviewOf(t);if(!r.status&&!r.count&&!r.redos)return '';var lab=r.status==='approved'?'✓ reviewed':r.status==='rejected'?'redo':r.status==='in_review'?'in review':'';return '<span class="rev-mini '+(r.status||'')+'">'+(lab?lab:'')+(r.count?(lab?' · ':'')+r.count+' rev':'')+(r.redos?' ↺'+r.redos:'')+'</span>';}
+  function acts(t){var b='';
+    if(canS)b+='<button class="btn '+(isDone(t)?'accent':'ghost')+' sm" data-tdone="'+t.id+'">'+(isDone(t)?'✓ Done':'Mark done')+'</button>';
+    b+='<button class="btn ghost sm" data-tedit="'+t.id+'">'+(isAdmin()?'Edit':canS?'Status':'View')+'</button>';
+    if(isAdmin())b+='<button class="btn danger xs" data-tdel="'+t.id+'" title="Remove task" aria-label="Remove">✕</button>';
+    return b;}
+  var body=list.map(function(t){var img=primaryOf(t),n=(IMAGES[t.id]||[]).length;
+    var assign=(modeledOf(t)||texturedOf(t))?' · <span class="assign">M:'+esc(modeledOf(t)||'–')+' · T:'+esc(texturedOf(t)||'–')+'</span>':'';
+    return '<div class="row'+(isDone(t)?' done':'')+'"><div class="rthumb">'+(img?'<img src="'+img.data+'">':esc(t.name.charAt(0)))+'</div>'
+      +'<div class="rmain"><b>'+esc(t.name)+(isDone(t)?' <span class="done-chip sm">✓</span>':'')+revTag(t)+'</b><div class="rmeta">'+(t.category?esc(t.category)+' · ':'Uncategorised · ')+(n?n+' img':'no images')+assign+'</div></div>'
+      +statusPips(t)+'<div class="ract">'+acts(t)+'</div></div>';}).join('');
+  mount.innerHTML=body;
+  mount.querySelectorAll('[data-tedit]').forEach(function(b){b.addEventListener('click',function(){startEditTask(b.getAttribute('data-tedit'));});});
+  mount.querySelectorAll('[data-tdel]').forEach(function(b){b.addEventListener('click',function(){quickDeleteTask(b.getAttribute('data-tdel'));});});
+  mount.querySelectorAll('[data-tdone]').forEach(function(b){b.addEventListener('click',function(){toggleTaskComplete(b.getAttribute('data-tdone'));});});}
+function toggleTaskComplete(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;t.completed=!t.completed;t.updatedAt=Date.now();
+  putTask(t).then(loadCaches).then(function(){toast(t.completed?'Marked completed':'Marked incomplete');paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
+function quickDeleteTask(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
+  if(!confirm('Remove "'+t.name+'" and its images? This cannot be undone.'))return;
+  var ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
+  Promise.all(ops).then(loadCaches).then(function(){toast('Task removed');if(taskEdit&&taskEdit.id===id){taskEdit=null;renderTaskEditor(null);}paintTaskList();}).catch(function(err){toast('Delete failed: '+err);});}
+
+/* ---------- task editor (mirrors the character editor, trimmed to task fields) ---------- */
+var taskEdit=null;
+function blankTask(){return{id:null,name:'',category:'',images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',completed:false,review:{status:'',count:0,redos:0},history:[],createdAt:null};}
+function startEditTask(id){if(!id&&!isAdmin())return;if(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
+    taskEdit={id:t.id,name:t.name,category:t.category||'',images:(IMAGES[t.id]||[]).map(function(im){return{id:im.id,name:im.name,data:im.data,by:im.by||null,ts:im.ts,existing:true};}),
+      primaryId:t.primaryImageId,status:Object.assign(defStatus(),t.status||{}),modeledBy:modeledOf(t),texturedBy:texturedOf(t),completed:isDone(t),history:(t.history||[]).slice(),createdAt:t.createdAt||null};
+  }else taskEdit=blankTask();
+  renderTaskEditor(taskEdit);var m=el('taskEditorMount');if(m)m.scrollIntoView({behavior:'smooth',block:'nearest'});}
+function renderTaskEditor(e){var mount=el('taskEditorMount');if(!mount)return;
+  if(e&&!isAdmin())return renderTaskStatusEditor(e,mount);
+  if(!e){var adm=isAdmin();
+    mount.innerHTML='<div class="editor"><h3>'+(adm?'Editor':'Update status')+'</h3><div class="esub">'+(adm?'Select a task to edit, or add a new one.':'Select a task to update its production status.')+'</div><div class="empty-state" style="padding:30px 6px"><div class="glyph">'+(adm?'✎':'⚑')+'</div><p>Nothing loaded</p>'+(adm?'<button class="btn accent" id="etNew">+ New task</button>':'')+'</div></div>';
+    var b=el('etNew');if(b)b.addEventListener('click',function(){startEditTask(null);});return;}
+  var catList=[];var seen={};TASKS.forEach(function(t){if(t.category&&!seen[t.category]){seen[t.category]=1;catList.push(t.category);}});
+  var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-tst="'+st.key+'"'+(e.status[st.key]?' checked':'')+'> '+esc(st.label)+'</label>';}).join('');
+  mount.innerHTML='<div class="editor"><h3>'+(e.id?'Edit task':'New task')+'</h3><div class="esub">'+(e.id?esc(e.id):'unsaved')+'</div>'
+    +'<div class="field"><label>Name</label><input id="tfName" value="'+esc(e.name)+'" placeholder="Task name, e.g. Riverside environment"></div>'
+    +'<div class="field"><label>Category</label><input id="tfCategory" list="tCatList" value="'+esc(e.category)+'" placeholder="e.g. Environment, Props, UI…"><datalist id="tCatList">'+catList.map(function(c){return '<option value="'+esc(c)+'">';}).join('')+'</datalist></div>'
+    +'<div class="field"><label>Production status</label><div class="statboxes">'+statusBoxes+'</div></div>'
+    +(isAdmin()
+      ? '<div class="grid2"><div class="field"><label>Modeled by</label><select id="tfModeled">'+userOpts(e.modeledBy)+'</select></div><div class="field"><label>Textured by</label><select id="tfTextured">'+userOpts(e.texturedBy)+'</select></div></div>'
+      : '<div class="grid2"><div class="field"><label>Modeled by</label><div class="ro-field">'+esc(e.modeledBy||'— unassigned —')+'</div></div><div class="field"><label>Textured by</label><div class="ro-field">'+esc(e.texturedBy||'— unassigned —')+'</div></div></div><div class="hint">Assignments are set by the admin.</div>')
+    +'<label class="statbox done-toggle"><input type="checkbox" id="tfDone"'+(e.completed?' checked':'')+'> <b>Mark this task as completed</b></label>'
+    +(e.id?taskReviewBlock(e.id):'')
+    +'<div class="field"><label>Images ('+e.images.length+')</label><div class="dropzone" id="tdz"><div class="dz-glyph">⇪</div><p>Drop images or click to browse — multiple allowed</p></div><input type="file" id="tfImgs" accept="image/*" multiple hidden><div class="thumbs" id="timgThumbs"></div><div class="hint">Star = primary (card image). Large images are auto-resized.</div></div>'
+    +historyBlock(e.history)
+    +'<div class="editor-actions"><button class="btn accent" id="etSave">Save task</button>'+(e.id?'<button class="btn danger" id="etDel">Delete</button>':'')+'<button class="btn ghost" id="etCancel">Cancel</button></div></div>';
+  bindTF('tfName','name');bindTF('tfCategory','category');
+  mount.querySelectorAll('[data-tst]').forEach(function(cb){cb.addEventListener('change',function(){if(!taskEdit)return;taskEdit.status[cb.getAttribute('data-tst')]=cb.checked;});});
+  bindTF('tfModeled','modeledBy');bindTF('tfTextured','texturedBy');
+  var fd=el('tfDone');if(fd)fd.addEventListener('change',function(){if(!taskEdit)return;taskEdit.completed=fd.checked;});
+  bindReviewTask(mount);
+  paintTaskThumbs();
+  var dz=el('tdz'),fi=el('tfImgs');dz.addEventListener('click',function(){fi.click();});
+  dz.addEventListener('dragover',function(ev){ev.preventDefault();dz.classList.add('over');});
+  dz.addEventListener('dragleave',function(){dz.classList.remove('over');});
+  dz.addEventListener('drop',function(ev){ev.preventDefault();dz.classList.remove('over');addTaskFiles(ev.dataTransfer.files);});
+  fi.addEventListener('change',function(){addTaskFiles(this.files);this.value='';});
+  el('etSave').addEventListener('click',saveTaskEdit);el('etCancel').addEventListener('click',function(){taskEdit=null;renderTaskEditor(null);});
+  var del=el('etDel');if(del)del.addEventListener('click',deleteTaskEdit);}
+function bindTF(id,key){var f=el(id);if(!f)return;function set(v){if(!taskEdit)return;taskEdit[key]=v;}
+  f.addEventListener('input',function(){set(this.value);});f.addEventListener('change',function(){set(this.value);});}
+function taskReviewBlock(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return '';var r=reviewOf(t);
+  var lab=r.status==='in_review'?'In review':r.status==='approved'?'Approved':r.status==='rejected'?'Rejected · redo':'Not submitted';
+  var badge='<span class="rev-badge '+(r.status||'none')+'">'+lab+'</span>';
+  var btns=canReview()?'<button class="btn accent sm" data-treview="approve" data-trid="'+id+'">Approve</button><button class="btn danger sm" data-treview="reject" data-trid="'+id+'">Reject &amp; redo</button>'
+    :(canStatus()?'<button class="btn ghost sm" data-treview="submit" data-trid="'+id+'">Submit for review</button>':'');
+  return '<div class="field"><label>Review</label><div class="rev-box">'+badge+'<span class="rev-stat">Reviews: <b>'+r.count+'</b> · Redos: <b>'+r.redos+'</b></span>'+(btns?'<div class="rev-btns">'+btns+'</div>':'')+'</div></div>';}
+function bindReviewTask(scope){(scope||document).querySelectorAll('[data-treview]').forEach(function(b){b.addEventListener('click',function(){reviewActTask(b.getAttribute('data-trid'),b.getAttribute('data-treview'));});});}
+function reviewActTask(id,act){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
+  t.review=t.review||{status:'',count:0,redos:0};
+  if(act==='submit'){if(!canStatus())return;t.review.status='in_review';}
+  else if(act==='approve'){if(!canReview())return;t.review.status='approved';t.review.count++;}
+  else if(act==='reject'){if(!canReview())return;t.review.status='rejected';t.review.count++;t.review.redos++;t.completed=false;}
+  t.updatedAt=Date.now();
+  putTask(t).then(loadCaches).then(function(){
+    toast(act==='submit'?'Submitted for review':act==='approve'?'Review approved':'Rejected — redo requested');
+    if(el('taskEditorMount')){if(taskEdit&&taskEdit.id===id){if(isAdmin())renderTaskEditor(taskEdit);else renderTaskStatusEditor(taskEdit,el('taskEditorMount'));}}
+    paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
+function renderTaskStatusEditor(e,mount){var img=null;var t=TASKS.find(function(x){return x.id===e.id;});if(t)img=primaryOf(t);var editable=canStatus();var dis=editable?'':' disabled';
+  var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-tst="'+st.key+'"'+(e.status[st.key]?' checked':'')+dis+'> '+esc(st.label)+'</label>';}).join('');
+  mount.innerHTML='<div class="editor"><h3>'+(editable?'Update status':'View')+'</h3><div class="esub">'+(canReview()?'Review and update production status':editable?'You can update production status and add images':'Read-only ('+esc(myRole())+')')+'</div>'
+    +'<div class="se-head"><div class="se-thumb">'+(img?'<img src="'+img.data+'">':esc(e.name.charAt(0)))+'</div><div><div class="se-name">'+esc(e.name)+(e.completed?' <span class="done-chip sm">✓</span>':'')+'</div><div class="se-meta">'+(e.category?esc(e.category):'Uncategorised')+'</div></div></div>'
+    +'<div class="se-assign"><span>Modeled by <b>'+esc(e.modeledBy||'—')+'</b></span><span>Textured by <b>'+esc(e.texturedBy||'—')+'</b></span></div>'
+    +'<div class="field"><label>Production status</label><div class="statboxes">'+statusBoxes+'</div></div>'
+    +'<label class="statbox done-toggle"><input type="checkbox" id="tfDone"'+(e.completed?' checked':'')+dis+'> <b>Mark this task as completed</b></label>'
+    +taskReviewBlock(e.id)
+    +(editable?'<div class="field"><label>Images ('+e.images.length+')</label><div class="dropzone" id="tdz"><div class="dz-glyph">⇪</div><p>Drop images or click to browse — multiple allowed</p></div><input type="file" id="tfImgs" accept="image/*" multiple hidden><div class="thumbs" id="timgThumbs"></div><div class="hint">Star = primary (card image). Large images are auto-resized.</div></div>':'')
+    +historyBlock(e.history)
+    +'<div class="editor-actions">'+(editable?'<button class="btn accent" id="etSaveStatus">Save status</button>':'')+'<button class="btn ghost" id="etCancel">Close</button></div></div>';
+  if(editable){mount.querySelectorAll('[data-tst]').forEach(function(cb){cb.addEventListener('change',function(){if(!taskEdit)return;taskEdit.status[cb.getAttribute('data-tst')]=cb.checked;});});
+    var fd=el('tfDone');if(fd)fd.addEventListener('change',function(){if(!taskEdit)return;taskEdit.completed=fd.checked;});
+    paintTaskThumbs();
+    var dz=el('tdz'),fi=el('tfImgs');
+    dz.addEventListener('click',function(){fi.click();});
+    dz.addEventListener('dragover',function(ev){ev.preventDefault();dz.classList.add('over');});
+    dz.addEventListener('dragleave',function(){dz.classList.remove('over');});
+    dz.addEventListener('drop',function(ev){ev.preventDefault();dz.classList.remove('over');addTaskFiles(ev.dataTransfer.files);});
+    fi.addEventListener('change',function(){addTaskFiles(this.files);this.value='';});
+    var ss=el('etSaveStatus');if(ss)ss.addEventListener('click',saveTaskStatusOnly);}
+  bindReviewTask(mount);
+  el('etCancel').addEventListener('click',function(){taskEdit=null;renderTaskEditor(null);});}
+function taskImageOps(id){var existing=(IMAGES[id]||[]).map(function(im){return im.id;}),keep=taskEdit.images.map(function(im){return im.id;}),ops=[];
+  existing.forEach(function(eid){if(keep.indexOf(eid)<0)ops.push(delImg(eid));});
+  taskEdit.images.forEach(function(im,idx){if(existing.indexOf(im.id)<0)ops.push(putImg({id:im.id,charId:id,name:im.name,data:im.data,ts:Date.now()+idx}));});
+  return ops;}
+function paintTaskThumbs(){var mount=el('timgThumbs');if(!mount)return;if(!taskEdit.images.length){mount.innerHTML='<div class="hint" style="grid-column:1/-1">No images yet.</div>';return;}
+  mount.innerHTML=taskEdit.images.map(function(im,i){var isP=(taskEdit.primaryId?taskEdit.primaryId===im.id:i===0);
+    var cap=im.by?('<div class="thumb-cap">'+esc(im.by)+(im.ts?' · '+fmtTS(im.ts):'')+'</div>'):'';
+    return '<div class="thumb-card"><div class="thumb-item'+(isP?' primary':'')+'"><img src="'+im.data+'"><button class="rm" data-trm="'+i+'">×</button><button class="star" data-tstar="'+i+'">★</button></div>'+cap+'</div>';}).join('');
+  mount.querySelectorAll('[data-trm]').forEach(function(b){b.addEventListener('click',function(){var i=+b.getAttribute('data-trm'),rm=taskEdit.images.splice(i,1)[0];if(rm&&taskEdit.primaryId===rm.id)taskEdit.primaryId=taskEdit.images.length?taskEdit.images[0].id:null;paintTaskThumbs();});});
+  mount.querySelectorAll('[data-tstar]').forEach(function(b){b.addEventListener('click',function(){taskEdit.primaryId=taskEdit.images[+b.getAttribute('data-tstar')].id;paintTaskThumbs();});});}
+function addTaskFiles(files){if(!taskEdit)return;var arr=Array.prototype.slice.call(files).filter(function(f){return /^image\//.test(f.type);});if(!arr.length)return;
+  Promise.all(arr.map(function(f){return resizeImage(f).then(function(d){if(taskEdit)taskEdit.images.push({id:uid(),name:f.name,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false});});})).then(function(){if(!taskEdit)return;if(!taskEdit.primaryId&&taskEdit.images.length)taskEdit.primaryId=taskEdit.images[0].id;paintTaskThumbs();});}
+function saveTaskEdit(){if(!taskEdit.name||!String(taskEdit.name).trim()){toast('Name is required');return;}
+  var oldT=taskEdit.id?TASKS.find(function(x){return x.id===taskEdit.id;}):null;
+  var id=taskEdit.id||('task-'+uid());
+  var rec={id:id,name:String(taskEdit.name).trim(),category:String(taskEdit.category||'').trim(),status:Object.assign(defStatus(),taskEdit.status),modeledBy:taskEdit.modeledBy||'',texturedBy:taskEdit.texturedBy||'',completed:!!taskEdit.completed,primaryImageId:taskEdit.primaryId,updatedAt:Date.now(),createdAt:(oldT&&oldT.createdAt)||taskEdit.createdAt||Date.now(),history:(oldT&&oldT.history)?oldT.history.slice():[]};
+  var ops=taskImageOps(id);
+  if(rec.primaryImageId==null&&taskEdit.images.length)rec.primaryImageId=taskEdit.images[0].id;
+  var newImgIds=taskEdit.images.map(function(im){return im.id;});
+  if(!oldT){
+    var parts=['created this task'];
+    if(taskEdit.images.length)parts.push('added '+taskEdit.images.length+' image'+(taskEdit.images.length>1?'s':''));
+    pushHistory(rec,parts.join(', '));
+  }else{
+    var oldStatus=Object.assign(defStatus(),oldT.status||{}),oldCompleted=isDone(oldT),oldImgIds=(IMAGES[oldT.id]||[]).map(function(im){return im.id;});
+    var added=newImgIds.filter(function(iid){return oldImgIds.indexOf(iid)<0;}).length;
+    var removed=oldImgIds.filter(function(iid){return newImgIds.indexOf(iid)<0;}).length;
+    var note=historyNote(oldStatus,rec.status,oldCompleted,rec.completed,added,removed);
+    if(oldT.name!==rec.name)note=(note?note+', ':'')+'renamed to "'+rec.name+'"';
+    pushHistory(rec,note);
+  }
+  ops.push(putTask(rec));
+  Promise.all(ops).then(loadCaches).then(function(){toast(taskEdit.id?'Task updated':'Task created');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Save failed: '+err);});}
+function saveTaskStatusOnly(){if(!taskEdit||!taskEdit.id)return;var t=TASKS.find(function(x){return x.id===taskEdit.id;});if(!t)return;
+  var oldStatus=Object.assign(defStatus(),t.status||{}),oldCompleted=isDone(t),oldImgIds=(IMAGES[taskEdit.id]||[]).map(function(im){return im.id;});
+  t.status=Object.assign(defStatus(),taskEdit.status);t.completed=!!taskEdit.completed;t.updatedAt=Date.now();
+  var ops=taskImageOps(taskEdit.id);
+  t.primaryImageId=taskEdit.primaryId;if(t.primaryImageId==null&&taskEdit.images.length)t.primaryImageId=taskEdit.images[0].id;
+  var newImgIds=taskEdit.images.map(function(im){return im.id;});
+  var added=newImgIds.filter(function(iid){return oldImgIds.indexOf(iid)<0;}).length;
+  var removed=oldImgIds.filter(function(iid){return newImgIds.indexOf(iid)<0;}).length;
+  pushHistory(t,historyNote(oldStatus,t.status,oldCompleted,t.completed,added,removed));
+  ops.push(putTask(t));
+  Promise.all(ops).then(loadCaches).then(function(){toast('Status updated');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
+function deleteTaskEdit(){if(!taskEdit.id)return;if(!confirm('Delete "'+taskEdit.name+'" and its images?'))return;var id=taskEdit.id,ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
+  Promise.all(ops).then(loadCaches).then(function(){toast('Task deleted');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Delete failed: '+err);});}
 
 /* ---------- settings / sheet sync panel ---------- */
 function showSettings(){if(!isAdmin())return;var mount=el('settingsMount');if(!mount)return;
@@ -1780,8 +2039,8 @@ function deleteEdit(){if(!edit.id)return;if(!confirm('Delete "'+edit.name+'" and
 
 /* ---------- export / import / reset ---------- */
 function exportData(){api('export').then(function(d){var blob=new Blob([JSON.stringify(d)],{type:'application/json'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='character_codex_backup.json';a.click();URL.revokeObjectURL(a.href);toast('Exported backup');}).catch(function(){toast('Export failed — sign in required');});}
-function importData(ev){var f=ev.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(){try{var d=JSON.parse(r.result);if(!d.characters)throw 'bad';if(!confirm('Replace all current data with this backup ('+d.characters.length+' units)?'))return;
-  api('import',{method:'POST',body:{characters:d.characters,images:d.images||[]}}).then(refreshRemote).then(loadCaches).then(function(){toast('Imported '+d.characters.length+' units');paintDashList();renderEditor(null);}).catch(function(){toast('Import failed');});
+function importData(ev){var f=ev.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(){try{var d=JSON.parse(r.result);if(!d.characters)throw 'bad';if(!confirm('Replace all current data with this backup ('+d.characters.length+' units'+(d.tasks?', '+d.tasks.length+' tasks':'')+')?'))return;
+  api('import',{method:'POST',body:{characters:d.characters,tasks:d.tasks,images:d.images||[]}}).then(refreshRemote).then(loadCaches).then(function(){toast('Imported '+d.characters.length+' units');paintDashList();renderEditor(null);if(el('taskList'))paintTaskList();}).catch(function(){toast('Import failed');});
   }catch(e){toast('Import failed: invalid file');}};r.readAsText(f);ev.target.value='';}
 function resetData(){if(!confirm('Reset the entire roster back to the original 300 seeded units? Added units and uploaded images will be lost.'))return;
   var sc=window.SEED_CHARACTERS||[], si=window.SEED_IMAGES||{};

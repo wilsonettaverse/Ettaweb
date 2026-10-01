@@ -1,13 +1,15 @@
-const { connectLambda, getCharacters, getImagesMeta, getSettingRaw, json } = require('./_lib');
+const { connectLambda, getCharacters, getTasks, getImagesMeta, getSettingRaw, json } = require('./_lib');
 
 exports.handler = async (event) => {
   connectLambda(event);
   if (event.httpMethod !== 'GET') return json(405, { error: 'Method not allowed' });
   try {
-    const [characters, imagesMeta, sheetUrl, users, sprints, clans, homeText, auth] = await Promise.all([
+    const [characters, tasks, imagesMeta, sheetUrl, adminEmail, users, sprints, clans, homeText, auth] = await Promise.all([
       getCharacters(),
+      getTasks(),
       getImagesMeta(),
       getSettingRaw('sheetUrl'),
+      getSettingRaw('adminEmail'),
       getSettingRaw('users'),
       getSettingRaw('sprints'),
       getSettingRaw('clans'),
@@ -19,9 +21,11 @@ exports.handler = async (event) => {
     });
     return json(200, {
       characters: characters,
+      tasks: tasks,
       images: images,
       settings: {
         sheetUrl: sheetUrl || '',
+        adminEmail: adminEmail || '',
         users: users || null,
         sprints: sprints || null,
         clans: clans || null,

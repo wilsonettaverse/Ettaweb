@@ -108,6 +108,17 @@ async function getCharacters() {
 async function setCharacters(arr) {
   await dataStore().setJSON('characters', arr);
 }
+// Tasks are small jobs (environment art, misc one-offs) that aren't tied to
+// any clan. They live in their own blob key, share the images store with
+// characters (image ids are globally unique), and share the same status/
+// review/history shape so the rest of the app's helpers work on them as-is.
+async function getTasks() {
+  const arr = await dataStore().get('tasks', { type: 'json' });
+  return Array.isArray(arr) ? arr : [];
+}
+async function setTasks(arr) {
+  await dataStore().setJSON('tasks', arr);
+}
 async function getImagesMeta() {
   const arr = await dataStore().get('images', { type: 'json' });
   return Array.isArray(arr) ? arr : [];
@@ -171,6 +182,8 @@ module.exports = {
   uid,
   getCharacters,
   setCharacters,
+  getTasks,
+  setTasks,
   getImagesMeta,
   setImagesMeta,
   getSettingRaw,

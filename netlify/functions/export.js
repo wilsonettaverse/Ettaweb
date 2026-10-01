@@ -1,6 +1,6 @@
 // Full JSON backup with images embedded as base64 data URLs (self-contained,
 // matches the original "Export JSON backup" behaviour).
-const { connectLambda, getCharacters, getImagesMeta, imageStore, requireSession, json } = require('./_lib');
+const { connectLambda, getCharacters, getTasks, getImagesMeta, imageStore, requireSession, json } = require('./_lib');
 
 exports.handler = async (event) => {
   connectLambda(event);
@@ -9,6 +9,7 @@ exports.handler = async (event) => {
   if (!session || session.role === 'Viewer') return json(401, { error: 'Sign in required' });
 
   const characters = await getCharacters();
+  const tasks = await getTasks();
   const metaArr = await getImagesMeta();
   const images = [];
   for (const m of metaArr) {
@@ -22,5 +23,5 @@ exports.handler = async (event) => {
       // skip unreadable image, keep exporting the rest
     }
   }
-  return json(200, { version: 2, characters: characters, images: images });
+  return json(200, { version: 3, characters: characters, tasks: tasks, images: images });
 };
