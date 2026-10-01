@@ -1019,7 +1019,8 @@ function seedIfEmpty(){if(REMOTE.characters&&REMOTE.characters.length)return Pro
   return api('seed',{method:'POST',body:{characters:sc,images:si}}).catch(function(){}).then(refreshRemote);}
 
 /* ============================================================ GOOGLE SHEET SYNC (one-way push) */
-function flat(c,withImg){var s=statusOf(c);var r=reviewOf(c);var sd=sprintDef(c.sprint||1)||{};var o={id:c.id,clan:c.clan,clanName:(CLAN_META[c.clan]||{}).name||c.clan,num:c.num,name:c.name,
+function clanNameOf(key){return (CLAN_META[key]||{}).name||key;}
+function flat(c,withImg){var s=statusOf(c);var r=reviewOf(c);var sd=sprintDef(c.sprint||1)||{};var o={id:c.id,clan:c.clan,clanName:clanNameOf(c.clan),num:c.num,name:c.name,
   mana:c.mana,arch:c.arch,type:c.type,tier:c.tier,sprint:c.sprint||'',sprintName:sprintName(c.sprint||1),sprintStart:sd.start||'',sprintEnd:sd.end||'',gender:c.gender||'',height:c.height||'',l1:c.l1,l6:c.l6,l12:c.l12,
   abilities:(c.abilities||[]).join(' + '),approved:!!s.approved,modeling:!!s.modeling,rigged:!!s.rigged,stored:!!s.stored,
   reviewStatus:r.status||'',reviews:r.count||0,redos:r.redos||0,
@@ -1028,9 +1029,9 @@ function flat(c,withImg){var s=statusOf(c);var r=reviewOf(c);var sd=sprintDef(c.
   if(withImg){var p=primaryOf(c);o.image=p?p.data:'';}
   return o;}
 function syncUpsert(c){return sheetPost({action:'upsert',character:flat(c,true)});}
-function syncDelete(id){return sheetPost({action:'delete',id:id});}
+function syncDelete(id,clanKey){return sheetPost({action:'delete',id:id,clanName:clanNameOf(clanKey)});}
 function syncAll(){if(!SHEET_URL){toast('Add your Apps Script URL first');return;}
-  var all=CHARS.slice(),chunk=10,i=0;toast('Pushing '+all.length+' rows (with images)\u2026');
+  var all=CHARS.slice(),chunk=10,i=0;toast('Pushing '+all.length+' rows (with images) across '+CLAN_ORDER.length+' clan tabs\u2026');
   (function next(){if(i>=all.length){toast('Pushed all rows to your sheet');return;}
     var part=all.slice(i,i+chunk);i+=chunk;
     sheetPost({action:'bulk',characters:part.map(function(c){return flat(c,true);})}).then(function(){setTimeout(next,350);});
@@ -1515,7 +1516,7 @@ function artistSection(a){var artists={};userNames().forEach(function(n){artists
 function quickDelete(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
   if(!confirm('Remove "'+c.name+'" and its images? This cannot be undone.'))return;
   var ops=[delChar(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
-  Promise.all(ops).then(loadCaches).then(function(){syncDelete(id);toast('Unit removed');if(edit&&edit.id===id){edit=null;renderEditor(null);}paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
+  Promise.all(ops).then(loadCaches).then(function(){syncDelete(id,c.clan);toast('Unit removed');if(edit&&edit.id===id){edit=null;renderEditor(null);}paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
 
 /* ---------- settings / sheet sync panel ---------- */
 function showSettings(){if(!isAdmin())return;var mount=el('settingsMount');if(!mount)return;
@@ -1567,7 +1568,7 @@ function deleteClan(id){if(!CLAN_META[id])return;if(CLAN_ORDER.length<=1){toast(
   if(!confirm('Delete the '+CLAN_META[id].name+' clan?'+(chars.length?'\n\nThis will also permanently remove its '+chars.length+' character(s) and their images.':'')+'\n\nThis cannot be undone.'))return;
   var ops=[];chars.forEach(function(c){ops.push(delChar(c.id));(IMAGES[c.id]||[]).forEach(function(im){ops.push(delImg(im.id));});});
   Promise.all(ops).then(loadCaches).then(function(){
-    chars.forEach(function(c){syncDelete(c.id);});
+    chars.forEach(function(c){syncDelete(c.id,c.clan);});
     delete CLAN_META[id];var ix=CLAN_ORDER.indexOf(id);if(ix>=0)CLAN_ORDER.splice(ix,1);
     if(dash.clan===id)dash.clan='';
     return saveClans();}).then(function(){toast('Clan deleted');renderClans();if(el('dashList'))paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
@@ -1597,26 +1598,26 @@ function renderUsers(){var m=el('usersMount');if(!m)return;
 function showGuide(){var back=h('<div class="modal-back"></div>');
   var code=["function doPost(e){",
 "  var ss=SpreadsheetApp.getActiveSpreadsheet();",
-"  var sh=ss.getSheetByName('Roster')||ss.insertSheet('Roster');",
 "  var head=['id','clan','clanName','num','name','mana','arch','type','tier','sprint','sprintName','sprintStart','sprintEnd','gender','height','l1','l6','l12','abilities','approved','modeling','rigged','stored','reviewStatus','reviews','redos','modeledBy','texturedBy','completed','image','updatedAt'];",
-"  if(sh.getLastRow()===0)sh.appendRow(head);",
 "  var imgCol=head.indexOf('image')+1;",
-"  var body=JSON.parse(e.postData.contents);",
-"  var rows=body.action==='bulk'?body.characters:(body.action==='delete'?[]:[body.character]);",
-"  function idRow(id){var ids=sh.getRange(2,1,Math.max(sh.getLastRow()-1,1),1).getValues();for(var i=0;i<ids.length;i++)if(ids[i][0]===id)return i+2;return 0;}",
-"  function putImg(row,uri){try{if(!uri)return;var m=uri.match(/^data:(.*?);base64,(.*)$/);if(!m)return;",
+"  function tabFor(clanName){var name=(clanName||'Unassigned').toString().slice(0,95)||'Unassigned';",
+"    var sh=ss.getSheetByName(name)||ss.insertSheet(name);if(sh.getLastRow()===0)sh.appendRow(head);return sh;}",
+"  function idRow(sh,id){var n=sh.getLastRow();if(n<2)return 0;var ids=sh.getRange(2,1,n-1,1).getValues();for(var i=0;i<ids.length;i++)if(ids[i][0]===id)return i+2;return 0;}",
+"  function putImg(sh,row,uri){try{if(!uri)return;var m=uri.match(/^data:(.*?);base64,(.*)$/);if(!m)return;",
 "    sh.getImages().forEach(function(im){var a=im.getAnchorCell();if(a.getRow()===row&&a.getColumn()===imgCol)im.remove();});",
 "    var img=sh.insertImage(Utilities.newBlob(Utilities.base64Decode(m[2]),m[1],'img.jpg'),imgCol,row);",
 "    img.setWidth(70);img.setHeight(52);sh.setRowHeight(row,56);}catch(err){}}",
-"  if(body.action==='delete'){var r=idRow(body.id);if(r)sh.deleteRow(r);return ok();}",
-"  rows.forEach(function(c){var line=head.map(function(k){return k==='image'?'':c[k];});",
-"    var r=idRow(c.id);if(r)sh.getRange(r,1,1,line.length).setValues([line]);else{sh.appendRow(line);r=sh.getLastRow();}",
-"    putImg(r,c.image);});",
+"  var body=JSON.parse(e.postData.contents);",
+"  if(body.action==='delete'){var sh=tabFor(body.clanName);var r=idRow(sh,body.id);if(r)sh.deleteRow(r);return ok();}",
+"  var rows=body.action==='bulk'?body.characters:[body.character];",
+"  rows.forEach(function(c){var sh=tabFor(c.clanName);var line=head.map(function(k){return k==='image'?'':c[k];});",
+"    var r=idRow(sh,c.id);if(r)sh.getRange(r,1,1,line.length).setValues([line]);else{sh.appendRow(line);r=sh.getLastRow();}",
+"    putImg(sh,r,c.image);});",
 "  return ok();",
 "}",
 "function ok(){return ContentService.createTextOutput('ok');}"].join("\n");
   back.innerHTML='<div class="modal" style="max-width:680px"><div class="modal-info" style="padding:26px"><div class="el">Google Sheet sync</div><h2 style="margin-bottom:8px">Connect a sheet in 4 steps</h2>'
-    +'<ol class="guide"><li>Create a Google Sheet (any name).</li><li>Extensions \u2192 <b>Apps Script</b>. Delete anything there and paste the code below.</li><li>Click <b>Deploy \u2192 New deployment \u2192 Web app</b>. Set \u201cExecute as: Me\u201d and \u201cWho has access: Anyone\u201d, then Deploy and copy the <b>Web app URL</b>.</li><li>Paste that URL into the Sheet-sync field and Save. Use \u201cPush all rows now\u201d to seed the sheet.</li></ol>'
+    +'<ol class="guide"><li>Create a Google Sheet (any name).</li><li>Extensions \u2192 <b>Apps Script</b>. Delete anything there and paste the code below.</li><li>Click <b>Deploy \u2192 New deployment \u2192 Web app</b>. Set \u201cExecute as: Me\u201d and \u201cWho has access: Anyone\u201d, then Deploy and copy the <b>Web app URL</b>.</li><li>Paste that URL into the Sheet-sync field and Save. Use \u201cPush all rows now\u201d to seed the sheet \u2014 each clan lands on its own tab, created automatically and named after the clan.</li></ol>'
     +'<div class="mono" style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--bark);margin:6px 0 4px">Apps Script</div>'
     +'<pre class="code" id="guideCode">'+esc(code)+'</pre>'
     +'<div class="modal-actions" style="padding:14px 0 0;border:0;background:none"><button class="btn accent" id="copyCode">Copy code</button><button class="btn ghost" id="guideClose">Close</button></div></div></div>';
@@ -1769,7 +1770,7 @@ function saveEdit(){if(!edit.name||!String(edit.name).trim()){toast('Name is req
   ops.push(putChar(rec));
   Promise.all(ops).then(loadCaches).then(function(){syncUpsert(rec);toast(edit.id?'Unit updated':'Unit created');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Save failed: '+err);});}
 function deleteEdit(){if(!edit.id)return;if(!confirm('Delete "'+edit.name+'" and its images?'))return;var id=edit.id,ops=[delChar(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
-  Promise.all(ops).then(loadCaches).then(function(){syncDelete(id);toast('Unit deleted');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
+  Promise.all(ops).then(loadCaches).then(function(){syncDelete(id,edit.clan);toast('Unit deleted');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
 
 /* ---------- export / import / reset ---------- */
 function exportData(){api('export').then(function(d){var blob=new Blob([JSON.stringify(d)],{type:'application/json'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='character_codex_backup.json';a.click();URL.revokeObjectURL(a.href);toast('Exported backup');}).catch(function(){toast('Export failed — sign in required');});}
