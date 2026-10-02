@@ -933,6 +933,17 @@ function sprintDates(n){var s=sprintDef(n);if(!s||(!s.start&&!s.end))return '';i
 function firstSprint(){return (SPRINT_DEFS[0]&&SPRINT_DEFS[0].n)||1;}
 function lastSprint(){return (SPRINT_DEFS.length?SPRINT_DEFS[SPRINT_DEFS.length-1].n:firstSprint());}
 function saveSprints(){return setSetting('sprints',SPRINT_DEFS);}
+// A sprint only "ends" once it has an end date that's in the past — a sprint
+// with no end date set never auto-archives anything.
+function sprintEnded(n){var s=sprintDef(n);return !!(s&&s.end&&new Date(s.end+'T23:59:59')<new Date());}
+/* ---------- archiving finished work once its sprint has wrapped ----------
+   A completed task/character whose sprint has ended quietly drops out of the
+   default Tasks views so the list doesn't pile up with old finished work —
+   but it's never gone: explicitly filtering to that sprint, or searching for
+   it (by its own name, category or its sprint's name), brings it right back.
+   Applies only to the Tasks views (allTaskLikeEntries) — the Roster and clan
+   pages keep showing every character regardless of sprint or completion. */
+function isArchivedTask(t){return isDone(t)&&sprintEnded(t.sprint||1);}
 /* ---------- artist sprint goals/scores ---------- */
 // Each artist's goal is 3.5 completed characters per sprint = a 100 score.
 // Some sprints hand an artist harder (complex) characters, so the goal for a
@@ -1219,7 +1230,7 @@ function makeParticles(container,cfg){
 /* ---------- shared bits ---------- */
 function memBanner(){return MEM?'<div class="mem-banner">Heads-up: this browser is blocking local saving for files opened directly, so changes won\u2019t persist after you close the tab. Use <b>Export</b> to back up, connect a Google Sheet below, or run the file from a host / different browser to enable saving.</div>':'';}
 function statusPips(c){var s=statusOf(c);return '<div class="pips" title="'+statusDone(c)+'/4 production steps">'+STAGES.map(function(st){return '<i class="'+(s[st.key]?'on':'')+'" title="'+esc(st.label)+'"></i>';}).join('')+'</div>';}
-function sprintTag(c){return '<span class="sprint-tag s'+(c.sprint||1)+'">Sprint '+(c.sprint||1)+'</span>';}
+function sprintTag(c){return '<span class="sprint-tag s'+(c.sprint||1)+'">'+esc(sprintName(c.sprint||1))+'</span>';}
 
 /* ============================================================ PIPELINE */
 function b64ToUtf8(b64){try{return decodeURIComponent(Array.prototype.map.call(atob(b64),function(c){return '%'+('00'+c.charCodeAt(0).toString(16)).slice(-2);}).join(''));}catch(e){return '<p>Pipeline unavailable.</p>';}}
@@ -1255,7 +1266,7 @@ var clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',clan:'
 function renderClan(clanId){var m=CLAN_META[clanId];if(!m){location.hash='#/';return;}applyClanTheme(m);
   clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',clan:clanId};
   var switcher=CLAN_ORDER.map(function(id){return '<a href="#/clan/'+id+'" class="'+(id===clanId?'active':'')+'">'+esc(CLAN_META[id].name)+'</a>';}).join('');
-  var sprintChips=SPRINT_DEFS.map(function(s){return '<button class="chip" data-sprint="'+s.n+'" aria-pressed="false" title="'+esc(s.name)+'">Sprint '+s.n+'</button>';}).join('');
+  var sprintChips=SPRINT_DEFS.map(function(s){return '<button class="chip" data-sprint="'+s.n+'" aria-pressed="false">'+esc(s.name)+'</button>';}).join('');
   var archChips=ARCHES.map(function(a){return '<button class="chip" data-arch="'+a+'" aria-pressed="false">'+a+'</button>';}).join('');
   var typeChips=TYPES.map(function(t){return '<button class="chip" data-type="'+t+'" aria-pressed="false">'+t+'</button>';}).join('');
   var modelerOpts='<option value="">All modelers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
@@ -1311,7 +1322,7 @@ function openModal(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)re
   var statusList='<div class="status-track">'+STAGES.map(function(st){return '<div class="strack '+(s[st.key]?'on':'')+'"><span class="tick">'+(s[st.key]?'\u2713':'\u25cb')+'</span>'+esc(st.label)+'</div>';}).join('')+'</div>';
   var back=h('<div class="modal-back"></div>');
   back.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="modal-top"><div class="modal-gallery">'+galMain+thumbs+'</div>'
-    +'<div class="modal-info"><div class="el">'+esc(m.name)+' · '+esc(m.element)+' · Unit #'+c.num+' · Sprint '+(c.sprint||1)+'</div><h2>'+esc(c.name)+(isDone(c)?' <span class="done-chip">\u2713 Completed</span>':'')+'</h2>'
+    +'<div class="modal-info"><div class="el">'+esc(m.name)+' · '+esc(m.element)+' · Unit #'+c.num+' · '+esc(sprintName(c.sprint||1))+'</div><h2>'+esc(c.name)+(isDone(c)?' <span class="done-chip">\u2713 Completed</span>':'')+'</h2>'
     +'<div class="kv"><span class="k">Mana <b>'+c.mana+'</b></span><span class="k">Class <b>'+esc(c.arch)+'</b></span><span class="k">Type <b>'+esc(c.type)+'</b></span><span class="k">Tier <b>'+esc(c.tier)+'</b></span></div>'
     +'<div class="kv"><span class="k">Modeled by <b>'+esc(modeledOf(c)||'\u2014')+'</b></span><span class="k">Textured by <b>'+esc(texturedOf(c)||'\u2014')+'</b></span><span class="k">Gender <b>'+esc(c.gender||'\u2014')+'</b></span><span class="k">Height <b>'+esc(c.height?c.height+' m':'\u2014')+'</b></span></div>'
     +'<div class="kv"><span class="k">Review <b>'+esc(reviewOf(c).status||'\u2014')+'</b></span><span class="k">Reviews received <b>'+reviewOf(c).count+'</b></span><span class="k">Redos <b>'+reviewOf(c).redos+'</b></span></div>'
@@ -1370,7 +1381,7 @@ function renderTasksPage(){resetTheme();
   taskState={search:'',category:'',sprint:'',modeler:'',texturer:''};
   var catSet={};TASKS.forEach(function(t){if(t.category)catSet[t.category]=1;});
   var catOpts='<option value="">All categories</option>'+Object.keys(catSet).sort().map(function(cat){return '<option>'+esc(cat)+'</option>';}).join('');
-  var sprintOpts='<option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'">Sprint '+s.n+' · '+esc(s.name)+'</option>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('');
   var modelerOpts='<option value="">All modelers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
   var texturerOpts='<option value="">All texturers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
   APP.innerHTML='<header class="hero"><div class="wrap">'+memBanner()
@@ -1395,7 +1406,11 @@ function matchTaskState(t){
   if(taskState.sprint&&(t.sprint||1)!==Number(taskState.sprint))return false;
   if(taskState.modeler&&modeledOf(t)!==taskState.modeler)return false;
   if(taskState.texturer&&texturedOf(t)!==taskState.texturer)return false;
-  if(taskState.search){var s=taskState.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0)return false;}
+  if(taskState.search){var s=taskState.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0&&sprintName(t.sprint||1).toLowerCase().indexOf(s)<0)return false;}
+  // Same archiving rule as the admin Tasks dashboard: completed work from an
+  // ended sprint fades from the default view, but reappears the moment you
+  // pick that sprint from the filter or search for it.
+  if(isArchivedTask(t)&&!taskState.sprint&&!taskState.search)return false;
   return true;}
 function paintTasksPage(){var list=allTaskLikeEntries().filter(matchTaskState);
   el('taskCount').textContent=list.length+' task'+(list.length===1?'':'s')+' shown';
@@ -1465,7 +1480,7 @@ function showTab(t){var c=el('crContent');if(!c)return;
   renderRoster(c);}
 function renderRoster(c){var admin=canEditChars();
   var clanChips='<button class="chip" data-dclan="" aria-pressed="'+(dash.clan?'false':'true')+'">All clans</button>'+CLAN_ORDER.map(function(id){return '<button class="chip" data-dclan="'+id+'" aria-pressed="'+(dash.clan===id?'true':'false')+'"><span class="clan-dot" style="background:'+CLAN_META[id].accent+'"></span>'+esc(CLAN_META[id].name)+'</button>';}).join('');
-  var sprintChips='<button class="chip" data-dsprint="" aria-pressed="'+(dash.sprint?'false':'true')+'">All sprints</button>'+SPRINT_DEFS.map(function(s){return '<button class="chip" data-dsprint="'+s.n+'" aria-pressed="'+(String(dash.sprint)===String(s.n)?'true':'false')+'" title="'+esc(s.name)+'">Sprint '+s.n+'</button>';}).join('');
+  var sprintChips='<button class="chip" data-dsprint="" aria-pressed="'+(dash.sprint?'false':'true')+'">All sprints</button>'+SPRINT_DEFS.map(function(s){return '<button class="chip" data-dsprint="'+s.n+'" aria-pressed="'+(String(dash.sprint)===String(s.n)?'true':'false')+'">'+esc(s.name)+'</button>';}).join('');
   var artistOpts='<option value="">All artists</option>'+userNames().map(function(n){return '<option'+(dash.artist===n?' selected':'')+'>'+esc(n)+'</option>';}).join('');
   c.innerHTML='<div class="dash-toolbar">'+(admin?'<button class="btn accent" id="btnNew">+ New character</button>':'')
       +'<div class="search" style="max-width:240px"><span class="mono" style="color:var(--bark)">\u2315</span><input id="dSearch" type="search" placeholder="Search units\u2026" value="'+esc(dash.search)+'"></div>'
@@ -1502,7 +1517,7 @@ function paintDashList(){var admin=canEditChars();var canDel=isAdmin();var list=
   var mount=el('dashList');if(!list.length){mount.innerHTML='<div class="empty-state"><div class="glyph">\u2205</div><p>No units match. Adjust the search or filters above.</p></div>';return;}
   var shown=list.slice(0,500);var canS=canStatus();
   function selBox(c){return canS?'<label class="selbox"><input type="checkbox" data-sel="'+c.id+'"'+(selected[c.id]?' checked':'')+'></label>':'';}
-  function sprintSel(c){if(!admin)return '';return '<select class="mini-sprint" data-sprint-id="'+c.id+'" title="Change sprint">'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+((c.sprint||1)===s.n?' selected':'')+'>S'+s.n+'</option>';}).join('')+'</select>';}
+  function sprintSel(c){if(!admin)return '';return '<select class="mini-sprint" data-sprint-id="'+c.id+'" title="Change sprint">'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+((c.sprint||1)===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('')+'</select>';}
   function revTag(c){var r=reviewOf(c);if(!r.status&&!r.count&&!r.redos)return '';var lab=r.status==='approved'?'\u2713 reviewed':r.status==='rejected'?'redo':r.status==='in_review'?'in review':'';return '<span class="rev-mini '+(r.status||'')+'">'+(lab?lab:'')+(r.count?(lab?' \u00b7 ':'')+r.count+' rev':'')+(r.redos?' \u21ba'+r.redos:'')+'</span>';}
   function acts(c){var b='';
     if(canS)b+='<button class="btn '+(isDone(c)?'accent':'ghost')+' sm" data-done="'+c.id+'">'+(isDone(c)?'\u2713 Done':'Mark done')+'</button>';
@@ -1536,7 +1551,7 @@ function bulkBar(shown){if(!canStatus())return '';var admin=canEditChars();var s
     +'<span class="bulk-count'+(shownSel?' on':'')+'">'+shownSel+' selected</span>'
     +(shownSel?'<span class="bulk-actions"><button class="btn accent sm" data-bulk="done">Mark completed</button>'
       +'<button class="btn ghost sm" data-bulk="undone">Mark incomplete</button>'
-      +(admin?'<select class="mini-sprint" id="bulkSprint"><option value="">Move to sprint\u2026</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'">Sprint '+s.n+' · '+esc(s.name)+'</option>';}).join('')+'</select>':'')
+      +(admin?'<select class="mini-sprint" id="bulkSprint"><option value="">Move to sprint\u2026</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('')+'</select>':'')
       +'<button class="btn ghost sm" data-bulk="clear">Clear</button></span>':'')+'</div>';}
 function bindBulk(shown){
   var sa=el('selAll');if(sa)sa.addEventListener('change',function(){shown.forEach(function(c){if(sa.checked)selected[c.id]=true;else delete selected[c.id];});paintDashList();});
@@ -1558,13 +1573,13 @@ function reviewAct(id,act){var c=CHARS.find(function(x){return x.id===id;});if(!
     paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
 function selIds(){return Object.keys(selected).filter(function(id){return selected[id];});}
 function setSprint(id,val){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;c.sprint=val;c.updatedAt=Date.now();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast(c.name+' → Sprint '+val);paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast(c.name+' → '+sprintName(val));paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
 function bulkComplete(val){var ids=selIds();if(!ids.length){toast('Select characters first');return;}
   var ops=[],changed=[];ids.forEach(function(id){var c=CHARS.find(function(x){return x.id===id;});if(c){c.completed=val;c.updatedAt=Date.now();ops.push(putChar(c));changed.push(c);}});
   Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});toast((val?'Marked ':'Unmarked ')+changed.length+' completed');paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
 function bulkSprint(val){var ids=selIds();if(!ids.length){toast('Select characters first');return;}
   var ops=[],changed=[];ids.forEach(function(id){var c=CHARS.find(function(x){return x.id===id;});if(c){c.sprint=val;c.updatedAt=Date.now();ops.push(putChar(c));changed.push(c);}});
-  Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});toast('Moved '+changed.length+' to Sprint '+val);paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
+  Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});toast('Moved '+changed.length+' to '+sprintName(val));paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
 
 /* ---------- analytics ---------- */
 function toggleAnalytics(){var m=el('analyticsMount');if(!m)return;if(m.dataset.open){m.dataset.open='';m.innerHTML='';return;}m.dataset.open='1';renderAnalytics(m);}
@@ -1595,7 +1610,7 @@ function renderSecurity(){var m=el('securityMount');if(!m)return;
     var rm=isW?'':'<button class="btn danger xs" data-rmuser="'+esc(u.name)+'" title="Remove">\u2715</button>';
     return '<tr><td><span class="uw-ava sm">'+esc(initials(u.name))+'</span> '+esc(u.name)+'</td><td>'+roleSel+'</td><td class="sec-pwcell">'+pw+' '+pwBtn+'</td><td style="text-align:right">'+rm+'</td></tr>';}).join('');
   m.innerHTML='<div class="panel security"><h3>Users &amp; access</h3>'
-    +'<div class="hint" style="margin:0 0 12px">Roles decide what each person can do \u2014 <b>Admin</b>: everything · <b>Editor</b>: add &amp; edit characters (name, stats, images, etc.) but can\u2019t delete them · <b>Reviewer</b>: approve/reject reviews &amp; update status · <b>Artist</b>: update status &amp; submit for review · <b>Viewer</b>: read-only. Optional per-user passwords add a sign-in gate. <i>Note: this is a local convenience gate, not server-grade security.</i></div>'
+    +'<div class="hint" style="margin:0 0 12px">Roles decide what each person can do \u2014 <b>Admin</b>: everything · <b>Editor</b>: add &amp; edit characters and tasks (name, stats, images, etc.) but can\u2019t delete them · <b>Reviewer</b>: approve/reject reviews &amp; update status · <b>Artist</b>: update status &amp; submit for review · <b>Viewer</b>: read-only. Optional per-user passwords add a sign-in gate. <i>Note: this is a local convenience gate, not server-grade security.</i></div>'
     +'<table class="sec-table"><thead><tr><th>Name</th><th>Role</th><th>Password</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'
     +'<div class="sec-add"><input id="secNewName" placeholder="New teammate name"><select id="secNewRole">'+['Artist','Editor','Reviewer','Viewer'].map(function(r){return '<option>'+r+'</option>';}).join('')+'</select><button class="btn accent sm" id="secAdd">+ Add user</button></div>'
     +'<div id="secPwFlow"></div>'
@@ -1653,19 +1668,19 @@ function quickDelete(id){if(!isAdmin())return;var c=CHARS.find(function(x){retur
 
 /* ---------- tasks dashboard tab (independent of clans) ---------- */
 var taskDash={search:'',category:'',sprint:'',artist:'',onlyArt:false};
-function renderTaskDash(c){if(!c)return;var admin=isAdmin();
+function renderTaskDash(c){if(!c)return;var admin=canEditChars();
   var catSet={};TASKS.forEach(function(t){if(t.category)catSet[t.category]=1;});
   var catOpts='<option value="">All categories</option>'+Object.keys(catSet).sort().map(function(cat){return '<option'+(taskDash.category===cat?' selected':'')+'>'+esc(cat)+'</option>';}).join('');
-  var sprintOpts='<option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+(String(taskDash.sprint)===String(s.n)?' selected':'')+'>Sprint '+s.n+' · '+esc(s.name)+'</option>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+(String(taskDash.sprint)===String(s.n)?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
   var artistOpts='<option value="">All assignees</option>'+userNames().map(function(n){return '<option'+(taskDash.artist===n?' selected':'')+'>'+esc(n)+'</option>';}).join('');
-  c.innerHTML='<div class="dash-toolbar">'+(admin?'<button class="btn accent" id="btnNewTask">+ New task</button><button class="btn ghost" id="btnAddCharTask">+ Add existing character</button>':'')
+  c.innerHTML='<div class="dash-toolbar">'+(admin?'<button class="btn accent" id="btnNewTask">+ New task</button>':'')+(isAdmin()?'<button class="btn ghost" id="btnAddCharTask">+ Add existing character</button>':'')
       +'<div class="search" style="max-width:240px"><span class="mono" style="color:var(--bark)">⌕</span><input id="tSearch" type="search" placeholder="Search tasks…" value="'+esc(taskDash.search)+'"></div>'
       +'<label class="filt"><span>Category</span><select id="tCategory" class="filt-sel">'+catOpts+'</select></label>'
       +'<label class="filt"><span>Sprint</span><select id="tSprint" class="filt-sel">'+sprintOpts+'</select></label>'
       +'<label class="filt"><span>Assignee</span><select id="tArtist" class="filt-sel">'+artistOpts+'</select></label>'
       +'<label class="chk"><input type="checkbox" id="tArt"'+(taskDash.onlyArt?' checked':'')+'> Only with art</label>'
       +'</div>'
-    +(admin?'<div id="addCharMount"></div>':'')
+    +(isAdmin()?'<div id="addCharMount"></div>':'')
     +'<div class="dash-grid"><div><div class="dash-list" id="taskList"></div></div><div id="taskEditorMount"></div></div>';
   el('tSearch').addEventListener('input',function(){taskDash.search=this.value.toLowerCase();paintTaskList();});
   el('tCategory').addEventListener('change',function(){taskDash.category=this.value;paintTaskList();});
@@ -1680,14 +1695,18 @@ function matchTask(t){
   if(taskDash.sprint&&(t.sprint||1)!==Number(taskDash.sprint))return false;
   if(taskDash.onlyArt&&!(IMAGES[t.id]||[]).length)return false;
   if(taskDash.artist&&modeledOf(t)!==taskDash.artist&&texturedOf(t)!==taskDash.artist)return false;
-  if(taskDash.search){var s=taskDash.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0)return false;}
+  if(taskDash.search){var s=taskDash.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0&&sprintName(t.sprint||1).toLowerCase().indexOf(s)<0)return false;}
+  // Done work from a sprint that's already wrapped steps out of the plain,
+  // unfiltered view — but picking that sprint above, or a search that
+  // matches it, brings it straight back (handled by the two checks above).
+  if(isArchivedTask(t)&&!taskDash.sprint&&!taskDash.search)return false;
   return true;}
 function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canStatus();var list=allTaskLikeEntries().filter(matchTask);
   if(!list.length){mount.innerHTML='<div class="empty-state"><div class="glyph">∅</div><p>No tasks match. Adjust the search or filters above, or add one.</p></div>';return;}
   function revTag(t){var r=reviewOf(t);if(!r.status&&!r.count&&!r.redos)return '';var lab=r.status==='approved'?'✓ reviewed':r.status==='rejected'?'redo':r.status==='in_review'?'in review':'';return '<span class="rev-mini '+(r.status||'')+'">'+(lab?lab:'')+(r.count?(lab?' · ':'')+r.count+' rev':'')+(r.redos?' ↺'+r.redos:'')+'</span>';}
   function acts(t){var isChar=isCharEntry(t),b='';
     if(canS)b+='<button class="btn '+(isDone(t)?'accent':'ghost')+' sm" data-tdone="'+t.id+'" data-ischar="'+(isChar?1:0)+'">'+(isDone(t)?'✓ Done':'Mark done')+'</button>';
-    b+='<button class="btn ghost sm" data-tedit="'+t.id+'" data-ischar="'+(isChar?1:0)+'">'+((isAdmin()||(isChar&&canEditChars()))?'Edit':canS?'Status':'View')+'</button>';
+    b+='<button class="btn ghost sm" data-tedit="'+t.id+'" data-ischar="'+(isChar?1:0)+'">'+((isAdmin()||canEditChars())?'Edit':canS?'Status':'View')+'</button>';
     if(isAdmin()){
       if(isChar)b+='<button class="btn ghost xs" data-tunpin="'+t.id+'" title="Remove from Tasks — keeps the character in its clan">✕</button>';
       else b+='<button class="btn danger xs" data-tdel="'+t.id+'" title="Remove task" aria-label="Remove">✕</button>';
@@ -1697,7 +1716,7 @@ function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canS
     var assign=(modeledOf(t)||texturedOf(t))?' · <span class="assign">M:'+esc(modeledOf(t)||'–')+' · T:'+esc(texturedOf(t)||'–')+'</span>':'';
     var tag=isChar?'From '+esc(CLAN_META[t.clan]?CLAN_META[t.clan].name:t.clan)+' · ':(t.category?esc(t.category)+' · ':'Uncategorised · ');
     return '<div class="row'+(isDone(t)?' done':'')+'"><div class="rthumb">'+(img?'<img src="'+img.data+'">':esc(t.name.charAt(0)))+'</div>'
-      +'<div class="rmain"><b>'+esc(t.name)+(isDone(t)?' <span class="done-chip sm">✓</span>':'')+revTag(t)+'</b><div class="rmeta">'+tag+'S'+(t.sprint||1)+' · '+(n?n+' img':'no images')+assign+'</div></div>'
+      +'<div class="rmain"><b>'+esc(t.name)+(isDone(t)?' <span class="done-chip sm">✓</span>':'')+revTag(t)+'</b><div class="rmeta">'+tag+esc(sprintName(t.sprint||1))+' · '+(n?n+' img':'no images')+assign+'</div></div>'
       +statusPips(t)+'<div class="ract">'+acts(t)+'</div></div>';}).join('');
   mount.innerHTML=body;
   mount.querySelectorAll('[data-tedit]').forEach(function(b){b.addEventListener('click',function(){
@@ -1735,7 +1754,7 @@ function unpinCharFromTasks(id){var c=CHARS.find(function(x){return x.id===id;})
   if(!confirm('Remove "'+c.name+'" from Tasks? The character itself stays untouched in its clan.'))return;
   c.pinnedToTasks=false;c.updatedAt=Date.now();
   putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast('Removed from Tasks');paintTaskList();renderAddCharPanel();}).catch(function(err){toast('Update failed: '+err);});}
-function quickDeleteTask(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
+function quickDeleteTask(id){if(!isAdmin())return;var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
   if(!confirm('Remove "'+t.name+'" and its images? This cannot be undone.'))return;
   var ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
   Promise.all(ops).then(loadCaches).then(function(){toast('Task removed');if(taskEdit&&taskEdit.id===id){taskEdit=null;renderTaskEditor(null);}paintTaskList();}).catch(function(err){toast('Delete failed: '+err);});}
@@ -1743,14 +1762,14 @@ function quickDeleteTask(id){var t=TASKS.find(function(x){return x.id===id;});if
 /* ---------- task editor (mirrors the character editor, trimmed to task fields) ---------- */
 var taskEdit=null;
 function blankTask(){return{id:null,name:'',category:'',sprint:lastSprint(),images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',completed:false,review:{status:'',count:0,redos:0},history:[],createdAt:null};}
-function startEditTask(id){if(!id&&!isAdmin())return;if(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
+function startEditTask(id){if(!id&&!canEditChars())return;if(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
     taskEdit={id:t.id,name:t.name,category:t.category||'',sprint:t.sprint||firstSprint(),images:(IMAGES[t.id]||[]).map(function(im){return{id:im.id,name:im.name,data:im.data,by:im.by||null,ts:im.ts,existing:true};}),
       primaryId:t.primaryImageId,status:Object.assign(defStatus(),t.status||{}),modeledBy:modeledOf(t),texturedBy:texturedOf(t),completed:isDone(t),history:(t.history||[]).slice(),createdAt:t.createdAt||null};
   }else taskEdit=blankTask();
   renderTaskEditor(taskEdit);var m=el('taskEditorMount');if(m)m.scrollIntoView({behavior:'smooth',block:'nearest'});}
 function renderTaskEditor(e){var mount=el('taskEditorMount');if(!mount)return;
-  if(e&&!isAdmin())return renderTaskStatusEditor(e,mount);
-  if(!e){var adm=isAdmin();
+  if(e&&!canEditChars())return renderTaskStatusEditor(e,mount);
+  if(!e){var adm=canEditChars();
     mount.innerHTML='<div class="editor"><h3>'+(adm?'Editor':'Update status')+'</h3><div class="esub">'+(adm?'Select a task to edit, or add a new one.':'Select a task to update its production status.')+'</div><div class="empty-state" style="padding:30px 6px"><div class="glyph">'+(adm?'✎':'⚑')+'</div><p>Nothing loaded</p>'+(adm?'<button class="btn accent" id="etNew">+ New task</button>':'')+'</div></div>';
     var b=el('etNew');if(b)b.addEventListener('click',function(){startEditTask(null);});return;}
   var catList=[];var seen={};TASKS.forEach(function(t){if(t.category&&!seen[t.category]){seen[t.category]=1;catList.push(t.category);}});
@@ -1759,19 +1778,19 @@ function renderTaskEditor(e){var mount=el('taskEditorMount');if(!mount)return;
   // SPRINT_DEFS list characters use, so a task's sprint has no connection to
   // any clan's own sprint count, and an admin can always backdate a task to
   // a sprint that's already finished if they forgot to log it at the time.
-  var taskSprintOpts=SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+((e.sprint||1)===s.n?' selected':'')+'>Sprint '+s.n+' · '+esc(s.name)+'</option>';}).join('');
+  var taskSprintOpts=SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+((e.sprint||1)===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
   mount.innerHTML='<div class="editor"><h3>'+(e.id?'Edit task':'New task')+'</h3><div class="esub">'+(e.id?esc(e.id):'unsaved')+'</div>'
     +'<div class="field"><label>Name</label><input id="tfName" value="'+esc(e.name)+'" placeholder="Task name, e.g. Riverside environment"></div>'
     +'<div class="grid2"><div class="field"><label>Category</label><input id="tfCategory" list="tCatList" value="'+esc(e.category)+'" placeholder="e.g. Environment, Props, UI…"><datalist id="tCatList">'+catList.map(function(c){return '<option value="'+esc(c)+'">';}).join('')+'</datalist></div><div class="field"><label>Sprint</label><select id="tfSprint">'+taskSprintOpts+'</select></div></div>'
     +'<div class="field"><label>Production status</label><div class="statboxes">'+statusBoxes+'</div></div>'
-    +(isAdmin()
+    +(canEditChars()
       ? '<div class="grid2"><div class="field"><label>Modeled by</label><select id="tfModeled">'+userOpts(e.modeledBy)+'</select></div><div class="field"><label>Textured by</label><select id="tfTextured">'+userOpts(e.texturedBy)+'</select></div></div>'
       : '<div class="grid2"><div class="field"><label>Modeled by</label><div class="ro-field">'+esc(e.modeledBy||'— unassigned —')+'</div></div><div class="field"><label>Textured by</label><div class="ro-field">'+esc(e.texturedBy||'— unassigned —')+'</div></div></div><div class="hint">Assignments are set by the admin.</div>')
     +'<label class="statbox done-toggle"><input type="checkbox" id="tfDone"'+(e.completed?' checked':'')+'> <b>Mark this task as completed</b></label>'
     +(e.id?taskReviewBlock(e.id):'')
     +'<div class="field"><label>Images ('+e.images.length+')</label><div class="dropzone" id="tdz"><div class="dz-glyph">⇪</div><p>Drop images or click to browse — multiple allowed</p></div><input type="file" id="tfImgs" accept="image/*" multiple hidden><div class="thumbs" id="timgThumbs"></div><div class="hint">Star = primary (card image). Large images are auto-resized.</div></div>'
     +historyBlock(e.history)
-    +'<div class="editor-actions"><button class="btn accent" id="etSave">Save task</button>'+(e.id?'<button class="btn danger" id="etDel">Delete</button>':'')+'<button class="btn ghost" id="etCancel">Cancel</button></div></div>';
+    +'<div class="editor-actions"><button class="btn accent" id="etSave">Save task</button>'+(e.id&&isAdmin()?'<button class="btn danger" id="etDel">Delete</button>':'')+'<button class="btn ghost" id="etCancel">Cancel</button></div></div>';
   bindTF('tfName','name');bindTF('tfCategory','category');bindTF('tfSprint','sprint',true);
   mount.querySelectorAll('[data-tst]').forEach(function(cb){cb.addEventListener('change',function(){if(!taskEdit)return;taskEdit.status[cb.getAttribute('data-tst')]=cb.checked;});});
   bindTF('tfModeled','modeledBy');bindTF('tfTextured','texturedBy');
@@ -1807,7 +1826,7 @@ function reviewActTask(id,act){var t=TASKS.find(function(x){return x.id===id;});
 function renderTaskStatusEditor(e,mount){var img=null;var t=TASKS.find(function(x){return x.id===e.id;});if(t)img=primaryOf(t);var editable=canStatus();var dis=editable?'':' disabled';
   var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-tst="'+st.key+'"'+(e.status[st.key]?' checked':'')+dis+'> '+esc(st.label)+'</label>';}).join('');
   mount.innerHTML='<div class="editor"><h3>'+(editable?'Update status':'View')+'</h3><div class="esub">'+(canReview()?'Review and update production status':editable?'You can update production status and add images':'Read-only ('+esc(myRole())+')')+'</div>'
-    +'<div class="se-head"><div class="se-thumb">'+(img?'<img src="'+img.data+'">':esc(e.name.charAt(0)))+'</div><div><div class="se-name">'+esc(e.name)+(e.completed?' <span class="done-chip sm">✓</span>':'')+'</div><div class="se-meta">'+(e.category?esc(e.category):'Uncategorised')+' · Sprint '+(e.sprint||1)+'</div></div></div>'
+    +'<div class="se-head"><div class="se-thumb">'+(img?'<img src="'+img.data+'">':esc(e.name.charAt(0)))+'</div><div><div class="se-name">'+esc(e.name)+(e.completed?' <span class="done-chip sm">✓</span>':'')+'</div><div class="se-meta">'+(e.category?esc(e.category):'Uncategorised')+' · '+esc(sprintName(e.sprint||1))+'</div></div></div>'
     +'<div class="se-assign"><span>Modeled by <b>'+esc(e.modeledBy||'—')+'</b></span><span>Textured by <b>'+esc(e.texturedBy||'—')+'</b></span></div>'
     +'<div class="field"><label>Production status</label><div class="statboxes">'+statusBoxes+'</div></div>'
     +'<label class="statbox done-toggle"><input type="checkbox" id="tfDone"'+(e.completed?' checked':'')+dis+'> <b>Mark this task as completed</b></label>'
@@ -1856,7 +1875,7 @@ function saveTaskEdit(){if(!taskEdit.name||!String(taskEdit.name).trim()){toast(
     var removed=oldImgIds.filter(function(iid){return newImgIds.indexOf(iid)<0;}).length;
     var note=historyNote(oldStatus,rec.status,oldCompleted,rec.completed,added,removed);
     if(oldT.name!==rec.name)note=(note?note+', ':'')+'renamed to "'+rec.name+'"';
-    if((oldT.sprint||1)!==rec.sprint)note=(note?note+', ':'')+'moved to Sprint '+rec.sprint;
+    if((oldT.sprint||1)!==rec.sprint)note=(note?note+', ':'')+'moved to '+sprintName(rec.sprint);
     pushHistory(rec,note);
   }
   ops.push(putTask(rec));
@@ -1872,7 +1891,7 @@ function saveTaskStatusOnly(){if(!taskEdit||!taskEdit.id)return;var t=TASKS.find
   pushHistory(t,historyNote(oldStatus,t.status,oldCompleted,t.completed,added,removed));
   ops.push(putTask(t));
   Promise.all(ops).then(loadCaches).then(function(){toast('Status updated');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
-function deleteTaskEdit(){if(!taskEdit.id)return;if(!confirm('Delete "'+taskEdit.name+'" and its images?'))return;var id=taskEdit.id,ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
+function deleteTaskEdit(){if(!taskEdit.id||!isAdmin())return;if(!confirm('Delete "'+taskEdit.name+'" and its images?'))return;var id=taskEdit.id,ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
   Promise.all(ops).then(loadCaches).then(function(){toast('Task deleted');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Delete failed: '+err);});}
 
 /* ---------- sprint scores dashboard tab ---------- */
@@ -1886,7 +1905,7 @@ var scoresState={sprint:null};
 function renderScoresDash(c){if(!c)return;
   if(!SPRINT_DEFS.length){c.innerHTML='<div class="empty-state"><div class="glyph">∅</div><p>No sprints set up yet — add one in Settings &amp; sync → Sprints.</p></div>';return;}
   if(scoresState.sprint==null||!sprintDef(scoresState.sprint))scoresState.sprint=lastSprint();
-  var sprintOpts=SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+(scoresState.sprint===s.n?' selected':'')+'>Sprint '+s.n+' · '+esc(s.name)+'</option>';}).join('');
+  var sprintOpts=SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+(scoresState.sprint===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
   var dt=sprintDates(scoresState.sprint);
   c.innerHTML='<div class="dash-toolbar"><label class="filt"><span>Sprint</span><select id="scoreSprint" class="filt-sel">'+sprintOpts+'</select></label>'
       +(dt?'<span class="hint">'+esc(dt)+'</span>':'')+'<span style="flex:1"></span>'
@@ -1974,7 +1993,7 @@ function deleteClan(id){if(!CLAN_META[id])return;if(CLAN_ORDER.length<=1){toast(
     return saveClans();}).then(function(){toast('Clan deleted');renderClans();if(el('dashList'))paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
 function renderSprints(){var m=el('sprintsMount');if(!m)return;
   m.innerHTML='<h3 style="font-size:16px;margin:0 0 4px">Sprints</h3><div class="hint" style="margin:0 0 10px">Name each sprint, set its start &amp; end dates, and add as many as you need. Setting a start date fills in a two-week end date automatically \u2014 adjust it if a sprint runs longer or shorter.</div>'
-    +'<div class="sprint-rows">'+SPRINT_DEFS.map(function(s){return '<div class="sprint-row"><span class="sprint-badge s'+s.n+'">Sprint '+s.n+'</span>'
+    +'<div class="sprint-rows">'+SPRINT_DEFS.map(function(s){return '<div class="sprint-row">'
       +'<input class="sp-name" data-sp="'+s.n+'" value="'+esc(s.name)+'" placeholder="Sprint name">'
       +'<input class="sp-date" type="date" data-sps="'+s.n+'" value="'+esc(s.start||'')+'" title="Start date">'
       +'<input class="sp-date" type="date" data-spe="'+s.n+'" value="'+esc(s.end||'')+'" title="End date">'
@@ -1983,7 +2002,7 @@ function renderSprints(){var m=el('sprintsMount');if(!m)return;
       +'<input id="sprintUpTo" type="number" min="1" placeholder="e.g. 30" style="width:80px">'
       +'<button class="btn ghost sm" id="addSprintsUpTo">Fill up to sprint #</button></div>';
   function upd(n,k,v){for(var i=0;i<SPRINT_DEFS.length;i++)if(SPRINT_DEFS[i].n===n)SPRINT_DEFS[i][k]=v;}
-  m.querySelectorAll('.sp-name').forEach(function(inp){inp.addEventListener('change',function(){upd(Number(inp.getAttribute('data-sp')),'name',inp.value.trim()||('Sprint '+inp.getAttribute('data-sp')));saveSprints().then(function(){toast('Sprint saved');});});});
+  m.querySelectorAll('.sp-name').forEach(function(inp){inp.addEventListener('change',function(){upd(Number(inp.getAttribute('data-sp')),'name',inp.value.trim()||'Untitled sprint');saveSprints().then(function(){toast('Sprint saved');});});});
   m.querySelectorAll('[data-sps]').forEach(function(inp){inp.addEventListener('change',function(){var n=Number(inp.getAttribute('data-sps'));upd(n,'start',inp.value);
     // Our sprints usually run two weeks \u2014 if there's no end date yet, suggest one 13 days out (14-day span) rather than leaving the admin to compute it by hand.
     var s=sprintDef(n);if(s&&inp.value&&!s.end){var d=new Date(inp.value+'T00:00:00');d.setDate(d.getDate()+13);var end=d.toISOString().slice(0,10);upd(n,'end',end);var ei=m.querySelector('[data-spe="'+n+'"]');if(ei)ei.value=end;}
@@ -2014,7 +2033,7 @@ function renderSprints(){var m=el('sprintsMount');if(!m)return;
     saveSprints().then(function(){toast('Added '+added+' sprint'+(added===1?'':'s')+' — rename any of them or adjust dates below');el('sprintUpTo').value='';renderSprints();});
   });
   m.querySelectorAll('[data-sp-del]').forEach(function(b){b.addEventListener('click',function(){var n=Number(b.getAttribute('data-sp-del'));var used=CHARS.filter(function(c){return (c.sprint||1)===n;}).length;
-    if(!confirm('Remove Sprint '+n+'?'+(used?' '+used+' character(s) are in it \u2014 they keep the number but it won\u2019t show as a sprint until re-added.':'')))return;
+    if(!confirm('Remove "'+sprintName(n)+'"?'+(used?' '+used+' character(s) are in it \u2014 they keep the sprint but it won\u2019t show as a sprint until re-added.':'')))return;
     SPRINT_DEFS=SPRINT_DEFS.filter(function(s){return s.n!==n;});saveSprints().then(function(){toast('Sprint removed');renderSprints();});});});}
 function renderUsers(){var m=el('usersMount');if(!m)return;
   m.innerHTML='<h3 style="font-size:16px;margin:0 0 4px">Team users</h3><div class="hint" style="margin:0 0 10px">Assign these people as modeler / texturer on each character. Removing a user leaves existing assignments untouched.</div>'
@@ -2075,7 +2094,7 @@ function renderEditor(e){var mount=el('editorMount');if(!mount)return;
   function opts(arr,val){return arr.map(function(o){return '<option'+(String(val)===String(o)?' selected':'')+'>'+o+'</option>';}).join('');}
   var clanOpts=CLAN_ORDER.map(function(id){return '<option value="'+id+'"'+(e.clan===id?' selected':'')+'>'+esc(CLAN_META[id].name)+'</option>';}).join('');
   var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-st="'+st.key+'"'+(e.status[st.key]?' checked':'')+'> '+esc(st.label)+'</label>';}).join('');
-  var sprintOpts=SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+((e.sprint||1)===s.n?' selected':'')+'>Sprint '+s.n+' · '+esc(s.name)+'</option>';}).join('');
+  var sprintOpts=SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+((e.sprint||1)===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
   var genderOpts=['','Male','Female','Other'].map(function(g){return '<option value="'+g+'"'+((e.gender||'')===g?' selected':'')+'>'+(g||'\u2014')+'</option>';}).join('');
   mount.innerHTML='<div class="editor"><h3>'+(e.id?'Edit unit':'New unit')+'</h3><div class="esub">'+(e.id?esc(e.id):'unsaved')+'</div>'
     +'<div class="field"><label>Name</label><input id="fName" value="'+esc(e.name)+'" placeholder="Unit name"></div>'
@@ -2122,7 +2141,7 @@ function bindReview(scope){(scope||document).querySelectorAll('[data-review]').f
 function renderStatusEditor(e,mount){var m=CLAN_META[e.clan];var img=null;var c=CHARS.find(function(x){return x.id===e.id;});if(c)img=primaryOf(c);var editable=canStatus();var dis=editable?'':' disabled';
   var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-st="'+st.key+'"'+(e.status[st.key]?' checked':'')+dis+'> '+esc(st.label)+'</label>';}).join('');
   mount.innerHTML='<div class="editor"><h3>'+(editable?'Update status':'View')+'</h3><div class="esub">'+(canReview()?'Review and update production status':editable?'You can update production status and add images':'Read-only ('+esc(myRole())+')')+'</div>'
-    +'<div class="se-head"><div class="se-thumb">'+(img?'<img src="'+img.data+'">':esc(e.name.charAt(0)))+'</div><div><div class="se-name">'+esc(e.name)+(e.completed?' <span class="done-chip sm">\u2713</span>':'')+'</div><div class="se-meta"><span class="clan-dot" style="background:'+m.accent+'"></span>'+esc(m.name)+' · #'+e.num+' · Sprint '+(e.sprint||1)+' · '+esc(e.arch)+' · '+esc(e.type)+'</div></div></div>'
+    +'<div class="se-head"><div class="se-thumb">'+(img?'<img src="'+img.data+'">':esc(e.name.charAt(0)))+'</div><div><div class="se-name">'+esc(e.name)+(e.completed?' <span class="done-chip sm">\u2713</span>':'')+'</div><div class="se-meta"><span class="clan-dot" style="background:'+m.accent+'"></span>'+esc(m.name)+' · #'+e.num+' · '+esc(sprintName(e.sprint||1))+' · '+esc(e.arch)+' · '+esc(e.type)+'</div></div></div>'
     +'<div class="se-assign"><span>Modeled by <b>'+esc(e.modeledBy||'\u2014')+'</b></span><span>Textured by <b>'+esc(e.texturedBy||'\u2014')+'</b></span></div>'
     +'<div class="field"><label>Production status</label><div class="statboxes">'+statusBoxes+'</div></div>'
     +'<label class="statbox done-toggle"><input type="checkbox" id="fDone"'+(e.completed?' checked':'')+dis+'> <b>Mark this character as completed</b></label>'
