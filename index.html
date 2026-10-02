@@ -975,7 +975,7 @@ function saveClans(){return setSetting('clans',{order:CLAN_ORDER.slice(),meta:JS
 
 var CHARS=[], TASKS=[], IMAGES={};
 var APP, MEM=false, SHEET_URL='', ADMIN_EMAIL='';
-var ROLES=['Admin','Reviewer','Artist','Viewer'];
+var ROLES=['Admin','Editor','Reviewer','Artist','Viewer'];
 var DEFAULT_USERS=[{name:'Wilson',role:'Admin'},{name:'Shridhar',role:'Artist'},{name:'Arvind',role:'Artist'},{name:'Abhyuday',role:'Artist'},{name:'Abhiji',role:'Artist'}];
 var USERS=DEFAULT_USERS.slice(), CURRENT_USER='', pendingUser='';
 var ADMIN_NAME='Wilson';
@@ -1002,7 +1002,14 @@ function userNames(){return USERS.map(function(u){return u.name;});}
 function myRole(){if(isAdmin())return 'Admin';var r=userRole(CURRENT_USER);return r==='Admin'?'Reviewer':r;}
 function canManage(){return isAdmin();}
 function canReview(){var r=myRole();return r==='Admin'||r==='Reviewer';}
-function canStatus(){var r=myRole();return r==='Admin'||r==='Reviewer'||r==='Artist';}
+// Editor: can add new characters and edit everything about an existing one
+// (name, clan, stats, abilities, images, assignments) — the one thing an
+// Editor can never do is delete a character. Enforced here on the client
+// (so the UI never even shows a delete control to an Editor) and, for real
+// security, on the server too: characters.js's DELETE handler requires
+// session.role==='Admin' regardless of what the client sends.
+function canEditChars(){var r=myRole();return r==='Admin'||r==='Editor';}
+function canStatus(){var r=myRole();return r==='Admin'||r==='Editor'||r==='Reviewer'||r==='Artist';}
 function isViewer(){return myRole()==='Viewer';}
 function reviewOf(c){return c.review||{status:'',count:0,redos:0};}
 
@@ -1439,7 +1446,7 @@ function renderDashboard(){resetTheme();
   if(admin)tabs=tabs.concat([{k:'home',label:'Front page'},{k:'security',label:'Users & access'},{k:'settings',label:'Settings & sync'}]);
   if(!tabs.some(function(t){return t.k===dashTab;}))dashTab='roster';
   var tabBar='<div class="cr-tabs">'+tabs.map(function(t){return '<button class="cr-tab'+(t.k===dashTab?' on':'')+'" data-tab="'+t.k+'">'+esc(t.label)+'</button>';}).join('')+'</div>';
-  var access=admin?'Full access':canReview()?'Can review & update status':canStatus()?'Can update production status':'Read-only access';
+  var access=admin?'Full access':canEditChars()?'Can add, edit & upload for characters (no delete)':canReview()?'Can review & update status':canStatus()?'Can update production status':'Read-only access';
   var who='<div class="cr-who"><span class="uw-ava'+(admin?' adm':'')+'">'+esc(initials(CURRENT_USER))+'</span><div class="cr-whotext"><b>'+esc(CURRENT_USER)+'</b><span class="cr-role">'+esc(role)+' · '+access+'</span></div><span class="spacer"></span><button class="btn ghost sm" id="btnLock">Sign out</button></div>';
   APP.innerHTML='<header class="dash-head"><div class="wrap"><div class="eyebrow">Control Room</div><h1 class="h-title">Roster Dashboard</h1>'
     +'<p class="h-sub">Manage characters and production status'+(admin?', plus analytics, the front page, team access and settings.':'.')+'</p></div></header>'
@@ -1456,7 +1463,7 @@ function showTab(t){var c=el('crContent');if(!c)return;
   if(t==='security'&&isAdmin()){c.innerHTML='<div id="securityMount"></div>';renderSecurity();return;}
   if(t==='settings'&&isAdmin()){c.innerHTML='<div id="settingsMount"></div>';renderSettingsInner(el('settingsMount'));return;}
   renderRoster(c);}
-function renderRoster(c){var admin=isAdmin();
+function renderRoster(c){var admin=canEditChars();
   var clanChips='<button class="chip" data-dclan="" aria-pressed="'+(dash.clan?'false':'true')+'">All clans</button>'+CLAN_ORDER.map(function(id){return '<button class="chip" data-dclan="'+id+'" aria-pressed="'+(dash.clan===id?'true':'false')+'"><span class="clan-dot" style="background:'+CLAN_META[id].accent+'"></span>'+esc(CLAN_META[id].name)+'</button>';}).join('');
   var sprintChips='<button class="chip" data-dsprint="" aria-pressed="'+(dash.sprint?'false':'true')+'">All sprints</button>'+SPRINT_DEFS.map(function(s){return '<button class="chip" data-dsprint="'+s.n+'" aria-pressed="'+(String(dash.sprint)===String(s.n)?'true':'false')+'" title="'+esc(s.name)+'">Sprint '+s.n+'</button>';}).join('');
   var artistOpts='<option value="">All artists</option>'+userNames().map(function(n){return '<option'+(dash.artist===n?' selected':'')+'>'+esc(n)+'</option>';}).join('');
@@ -1486,7 +1493,7 @@ function dchips(sel,key){APP.querySelectorAll(sel).forEach(function(b){b.addEven
   if(isClan){if(dash.clan)applyClanTheme(CLAN_META[dash.clan]);else resetTheme();}
   selected={};
   paintDashList();});});}
-function paintDashList(){var admin=isAdmin();var list=CHARS.filter(function(c){
+function paintDashList(){var admin=canEditChars();var canDel=isAdmin();var list=CHARS.filter(function(c){
   if(dash.clan&&c.clan!==dash.clan)return false;
   if(dash.sprint&&String(c.sprint)!==String(dash.sprint))return false;
   if(dash.onlyArt&&!(IMAGES[c.id]||[]).length)return false;
@@ -1500,7 +1507,7 @@ function paintDashList(){var admin=isAdmin();var list=CHARS.filter(function(c){
   function acts(c){var b='';
     if(canS)b+='<button class="btn '+(isDone(c)?'accent':'ghost')+' sm" data-done="'+c.id+'">'+(isDone(c)?'\u2713 Done':'Mark done')+'</button>';
     b+='<button class="btn ghost sm" data-edit="'+c.id+'">'+(admin?'Edit':canS?'Status':'View')+'</button>';
-    if(admin)b+='<button class="btn danger xs" data-del="'+c.id+'" title="Remove unit" aria-label="Remove">\u2715</button>';
+    if(canDel)b+='<button class="btn danger xs" data-del="'+c.id+'" title="Remove unit" aria-label="Remove">\u2715</button>';
     return b;}
   var body;
   if(dash.view==='grid'){
@@ -1523,7 +1530,7 @@ function paintDashList(){var admin=isAdmin();var list=CHARS.filter(function(c){
   mount.querySelectorAll('[data-edit]').forEach(function(b){b.addEventListener('click',function(){startEdit(b.getAttribute('data-edit'));});});
   mount.querySelectorAll('[data-del]').forEach(function(b){b.addEventListener('click',function(){quickDelete(b.getAttribute('data-del'));});});
   mount.querySelectorAll('[data-done]').forEach(function(b){b.addEventListener('click',function(){toggleComplete(b.getAttribute('data-done'));});});}
-function bulkBar(shown){if(!canStatus())return '';var admin=isAdmin();var shownSel=shown.filter(function(c){return selected[c.id];}).length;var allOn=shown.length&&shownSel===shown.length;
+function bulkBar(shown){if(!canStatus())return '';var admin=canEditChars();var shownSel=shown.filter(function(c){return selected[c.id];}).length;var allOn=shown.length&&shownSel===shown.length;
   return '<div class="bulkbar"><label class="selall"><input type="checkbox" id="selAll"'+(allOn?' checked':'')+'> Select all shown</label>'
     +'<span class="bulk-total">'+shown.length+' units</span>'
     +'<span class="bulk-count'+(shownSel?' on':'')+'">'+shownSel+' selected</span>'
@@ -1582,15 +1589,15 @@ function renderHomeEditor(){var m=el('homeMount');if(!m)return;var H=HOME_TEXT;
   el('hReset').addEventListener('click',function(){if(!confirm('Reset all front-page text to the original wording?'))return;for(var k in DEFAULT_HOME)HOME_TEXT[k]=DEFAULT_HOME[k];saveHome().then(function(){toast('Front page reset');renderHomeEditor();});});}
 function renderSecurity(){var m=el('securityMount');if(!m)return;
   var rows=USERS.map(function(u){var isW=(u.name===ADMIN_NAME);
-    var roleSel=isW?'<span class="sec-role locked">Admin</span>':'<select class="sec-role-sel" data-role="'+esc(u.name)+'">'+['Reviewer','Artist','Viewer'].map(function(r){return '<option'+(u.role===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select>';
+    var roleSel=isW?'<span class="sec-role locked">Admin</span>':'<select class="sec-role-sel" data-role="'+esc(u.name)+'">'+['Editor','Reviewer','Artist','Viewer'].map(function(r){return '<option'+(u.role===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select>';
     var pw=isW?'<span class="sec-pw on">admin password</span>':(u.hash?'<span class="sec-pw on">password set</span>':'<span class="sec-pw off">no password</span>');
     var pwBtn=isW?'':'<button class="btn ghost xs" data-setpw="'+esc(u.name)+'">'+(u.hash?'Reset':'Set')+'</button>'+(u.hash?'<button class="btn ghost xs" data-clrpw="'+esc(u.name)+'">Clear</button>':'');
     var rm=isW?'':'<button class="btn danger xs" data-rmuser="'+esc(u.name)+'" title="Remove">\u2715</button>';
     return '<tr><td><span class="uw-ava sm">'+esc(initials(u.name))+'</span> '+esc(u.name)+'</td><td>'+roleSel+'</td><td class="sec-pwcell">'+pw+' '+pwBtn+'</td><td style="text-align:right">'+rm+'</td></tr>';}).join('');
   m.innerHTML='<div class="panel security"><h3>Users &amp; access</h3>'
-    +'<div class="hint" style="margin:0 0 12px">Roles decide what each person can do \u2014 <b>Admin</b>: everything · <b>Reviewer</b>: approve/reject reviews &amp; update status · <b>Artist</b>: update status &amp; submit for review · <b>Viewer</b>: read-only. Optional per-user passwords add a sign-in gate. <i>Note: this is a local convenience gate, not server-grade security.</i></div>'
+    +'<div class="hint" style="margin:0 0 12px">Roles decide what each person can do \u2014 <b>Admin</b>: everything · <b>Editor</b>: add &amp; edit characters (name, stats, images, etc.) but can\u2019t delete them · <b>Reviewer</b>: approve/reject reviews &amp; update status · <b>Artist</b>: update status &amp; submit for review · <b>Viewer</b>: read-only. Optional per-user passwords add a sign-in gate. <i>Note: this is a local convenience gate, not server-grade security.</i></div>'
     +'<table class="sec-table"><thead><tr><th>Name</th><th>Role</th><th>Password</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'
-    +'<div class="sec-add"><input id="secNewName" placeholder="New teammate name"><select id="secNewRole">'+['Artist','Reviewer','Viewer'].map(function(r){return '<option>'+r+'</option>';}).join('')+'</select><button class="btn accent sm" id="secAdd">+ Add user</button></div>'
+    +'<div class="sec-add"><input id="secNewName" placeholder="New teammate name"><select id="secNewRole">'+['Artist','Editor','Reviewer','Viewer'].map(function(r){return '<option>'+r+'</option>';}).join('')+'</select><button class="btn accent sm" id="secAdd">+ Add user</button></div>'
     +'<div id="secPwFlow"></div>'
     +'<div class="divider"></div>'
     +'<div class="hint" style="margin:0 0 8px"><b>Admin password</b> (for Wilson / admin sign-in)</div>'
@@ -1639,7 +1646,7 @@ function artistSection(a){var artists={};userNames().forEach(function(n){artists
   var names=Object.keys(artists).sort(function(x,y){return (artists[y].modeled+artists[y].textured)-(artists[x].modeled+artists[x].textured);});
   var rows=names.map(function(n){var d=artists[n];return '<div class="artist-row"><span class="ar-name"><span class="uw-ava sm">'+esc(initials(n))+'</span>'+esc(n)+'</span><span class="ar-stat">Modeled <b>'+d.modeled+'</b></span><span class="ar-stat">Textured <b>'+d.textured+'</b></span><span class="ar-stat done">Completed <b>'+(d.done||0)+'</b></span></div>';}).join('');
   return '<div class="an-artists"><h4>Models by artist</h4>'+(rows||'<div class="hint">No modelling / texturing assigned yet.</div>')+'</div>';}
-function quickDelete(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
+function quickDelete(id){if(!isAdmin())return;var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
   if(!confirm('Remove "'+c.name+'" and its images? This cannot be undone.'))return;
   var ops=[delChar(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
   Promise.all(ops).then(loadCaches).then(function(){syncDelete(id,c.clan);toast('Unit removed');if(edit&&edit.id===id){edit=null;renderEditor(null);}paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
@@ -1680,7 +1687,7 @@ function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canS
   function revTag(t){var r=reviewOf(t);if(!r.status&&!r.count&&!r.redos)return '';var lab=r.status==='approved'?'✓ reviewed':r.status==='rejected'?'redo':r.status==='in_review'?'in review':'';return '<span class="rev-mini '+(r.status||'')+'">'+(lab?lab:'')+(r.count?(lab?' · ':'')+r.count+' rev':'')+(r.redos?' ↺'+r.redos:'')+'</span>';}
   function acts(t){var isChar=isCharEntry(t),b='';
     if(canS)b+='<button class="btn '+(isDone(t)?'accent':'ghost')+' sm" data-tdone="'+t.id+'" data-ischar="'+(isChar?1:0)+'">'+(isDone(t)?'✓ Done':'Mark done')+'</button>';
-    b+='<button class="btn ghost sm" data-tedit="'+t.id+'" data-ischar="'+(isChar?1:0)+'">'+(isAdmin()?'Edit':canS?'Status':'View')+'</button>';
+    b+='<button class="btn ghost sm" data-tedit="'+t.id+'" data-ischar="'+(isChar?1:0)+'">'+((isAdmin()||(isChar&&canEditChars()))?'Edit':canS?'Status':'View')+'</button>';
     if(isAdmin()){
       if(isChar)b+='<button class="btn ghost xs" data-tunpin="'+t.id+'" title="Remove from Tasks — keeps the character in its clan">✕</button>';
       else b+='<button class="btn danger xs" data-tdel="'+t.id+'" title="Remove task" aria-label="Remove">✕</button>';
@@ -2053,7 +2060,7 @@ function showGuide(){var back=h('<div class="modal-back"></div>');
 /* ---------- editor ---------- */
 var edit=null;
 function blankChar(){return{id:null,clan:'aranyani',num:'',name:'',mana:0,arch:'Support',type:'Magic',tier:'Basic',sprint:firstSprint(),gender:'',height:'',l1:'',l6:'',l12:'',abilities:[],images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',completed:false,review:{status:'',count:0,redos:0},history:[]};}
-function startEdit(id){if(!id&&!isAdmin())return;if(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
+function startEdit(id){if(!id&&!canEditChars())return;if(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
     edit={id:c.id,clan:c.clan,num:c.num,name:c.name,mana:c.mana,arch:c.arch,type:c.type,tier:c.tier,sprint:c.sprint||1,gender:c.gender||'',height:c.height||'',l1:c.l1,l6:c.l6,l12:c.l12,
       abilities:c.abilities.slice(),images:(IMAGES[c.id]||[]).map(function(im){return{id:im.id,name:im.name,data:im.data,by:im.by||null,ts:im.ts,existing:true};}),
       primaryId:c.primaryImageId,status:Object.assign(defStatus(),c.status||{}),modeledBy:modeledOf(c),texturedBy:texturedOf(c),completed:isDone(c),history:(c.history||[]).slice()};
@@ -2061,8 +2068,8 @@ function startEdit(id){if(!id&&!isAdmin())return;if(id){var c=CHARS.find(functio
   renderEditor(edit);el('editorMount').scrollIntoView({behavior:'smooth',block:'nearest'});}
 function userOpts(val){return '<option value="">\u2014 unassigned \u2014</option>'+USERS.map(function(u){return '<option'+(val===u.name?' selected':'')+'>'+esc(u.name)+'</option>';}).join('');}
 function renderEditor(e){var mount=el('editorMount');if(!mount)return;
-  if(e&&!isAdmin())return renderStatusEditor(e,mount);
-  if(!e){var adm=isAdmin();
+  if(e&&!canEditChars())return renderStatusEditor(e,mount);
+  if(!e){var adm=canEditChars();
     mount.innerHTML='<div class="editor"><h3>'+(adm?'Editor':'Update status')+'</h3><div class="esub">'+(adm?'Select a unit to edit, or add a new one.':'Select a unit to update its production status.')+'</div><div class="empty-state" style="padding:30px 6px"><div class="glyph">'+(adm?'\u270e':'\u2691')+'</div><p>Nothing loaded</p>'+(adm?'<button class="btn accent" id="edNew">+ New character</button>':'')+'</div></div>';
     var b=el('edNew');if(b)b.addEventListener('click',function(){startEdit(null);});return;}
   function opts(arr,val){return arr.map(function(o){return '<option'+(String(val)===String(o)?' selected':'')+'>'+o+'</option>';}).join('');}
@@ -2080,14 +2087,14 @@ function renderEditor(e){var mount=el('editorMount');if(!mount)return;
     +'<div class="field"><label>Stats — HP / Shield / Speed / Damage</label><div class="grid3"><input id="fL1" value="'+esc(e.l1)+'" placeholder="L1 6/1/4/3"><input id="fL6" value="'+esc(e.l6)+'" placeholder="L6"><input id="fL12" value="'+esc(e.l12)+'" placeholder="L12"></div><div class="hint">L12 drives the card bars.</div></div>'
     +'<div class="field"><label>Abilities</label><textarea id="fAbil" placeholder="Comma or + separated">'+esc(e.abilities.join(', '))+'</textarea></div>'
     +'<div class="field"><label>Production status</label><div class="statboxes">'+statusBoxes+'</div></div>'
-    +(isAdmin()
+    +(canEditChars()
       ? '<div class="grid2"><div class="field"><label>Modeled by</label><select id="fModeled">'+userOpts(e.modeledBy)+'</select></div><div class="field"><label>Textured by</label><select id="fTextured">'+userOpts(e.texturedBy)+'</select></div></div>'
       : '<div class="grid2"><div class="field"><label>Modeled by</label><div class="ro-field">'+esc(e.modeledBy||'\u2014 unassigned \u2014')+'</div></div><div class="field"><label>Textured by</label><div class="ro-field">'+esc(e.texturedBy||'\u2014 unassigned \u2014')+'</div></div></div><div class="hint">Assignments are set by the admin.</div>')
     +'<label class="statbox done-toggle"><input type="checkbox" id="fDone"'+(e.completed?' checked':'')+'> <b>Mark this character as completed</b></label>'
     +(e.id?reviewBlock(e.id):'')
     +'<div class="field"><label>Images ('+e.images.length+')</label><div class="dropzone" id="dz"><div class="dz-glyph">\u21ea</div><p>Drop images or click to browse — multiple allowed</p></div><input type="file" id="fImgs" accept="image/*" multiple hidden><div class="thumbs" id="imgThumbs"></div><div class="hint">Star = primary (card image). Large images are auto-resized.</div></div>'
     +historyBlock(e.history)
-    +'<div class="editor-actions"><button class="btn accent" id="edSave">Save unit</button>'+(e.id?'<button class="btn danger" id="edDel">Delete</button>':'')+'<button class="btn ghost" id="edCancel">Cancel</button></div></div>';
+    +'<div class="editor-actions"><button class="btn accent" id="edSave">Save unit</button>'+(e.id&&isAdmin()?'<button class="btn danger" id="edDel">Delete</button>':'')+'<button class="btn ghost" id="edCancel">Cancel</button></div></div>';
   bindF('fName','name');bindF('fClan','clan');bindF('fSprint','sprint',true);bindF('fArch','arch');bindF('fType','type');bindF('fTier','tier');bindF('fNum','num',true);bindF('fMana','mana',true);bindF('fL1','l1');bindF('fL6','l6');bindF('fL12','l12');
   bindF('fGender','gender');bindF('fHeight','height');
   el('fAbil').addEventListener('input',function(){if(!edit)return;edit.abilities=this.value.split(/[,+]/).map(function(s){return s.trim();}).filter(Boolean);});
@@ -2198,7 +2205,7 @@ function saveEdit(){if(!edit.name||!String(edit.name).trim()){toast('Name is req
   }
   ops.push(putChar(rec));
   Promise.all(ops).then(loadCaches).then(function(){syncUpsert(rec);toast(edit.id?'Unit updated':'Unit created');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Save failed: '+err);});}
-function deleteEdit(){if(!edit.id)return;if(!confirm('Delete "'+edit.name+'" and its images?'))return;var id=edit.id,ops=[delChar(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
+function deleteEdit(){if(!edit.id||!isAdmin())return;if(!confirm('Delete "'+edit.name+'" and its images?'))return;var id=edit.id,ops=[delChar(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
   Promise.all(ops).then(loadCaches).then(function(){syncDelete(id,edit.clan);toast('Unit deleted');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
 
 /* ---------- export / import / reset ---------- */
@@ -2223,9 +2230,9 @@ function renderLogin(){
   if(CURRENT_USER===ADMIN_NAME&&!AUTHED)return renderAdminLogin();
   if(pendingUser){var pu=findUser(pendingUser);if(pu&&pu.hash)return renderUserPwLogin(pu);pendingUser='';}
   var picks=USERS.map(function(u){var adm=(u.name===ADMIN_NAME);var lk=(!adm&&u.hash)?' \ud83d\udd12':'';return '<button class="pick" data-pick="'+esc(u.name)+'"><span class="uw-ava'+(adm?' adm':'')+'">'+esc(initials(u.name))+'</span><span class="pick-name">'+esc(u.name)+lk+'</span><span class="pick-role">'+(adm?'Admin \u00b7 password':esc(u.role)+(u.hash?' \u00b7 password':''))+'</span></button>';}).join('');
-  APP.innerHTML='<div class="auth-wrap wide"><div class="auth-card"><div class="lockicon">\ud83d\udc65</div><h1>Who\u2019s working?</h1><p class="sub">Sign in to the dashboard. What you can do depends on your role \u2014 Admin, Reviewer, 3D Artist or Viewer.</p>'
+  APP.innerHTML='<div class="auth-wrap wide"><div class="auth-card"><div class="lockicon">\ud83d\udc65</div><h1>Who\u2019s working?</h1><p class="sub">Sign in to the dashboard. What you can do depends on your role \u2014 Admin, Editor, Reviewer, 3D Artist or Viewer.</p>'
     +'<div class="picklist">'+picks+'</div>'
-    +'<p class="auth-note">Admins manage the roster, team &amp; access. Reviewers approve or reject work. Artists update production status. Viewers can look but not change.</p></div></div>';
+    +'<p class="auth-note">Admins manage the roster, team &amp; access. Editors add and edit characters (no deleting). Reviewers approve or reject work. Artists update production status. Viewers can look but not change.</p></div></div>';
   APP.querySelectorAll('[data-pick]').forEach(function(b){b.addEventListener('click',function(){var name=b.getAttribute('data-pick');
     if(name===ADMIN_NAME){userSetLS(ADMIN_NAME);renderUserWidget();if(AUTHED)renderDashboard();else renderAdminLogin();return;}
     var u=findUser(name);if(u&&u.hash){pendingUser=name;renderUserPwLogin(u);}else{userSetLS(name);renderUserWidget();toast('Signing in…');
