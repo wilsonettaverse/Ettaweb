@@ -698,6 +698,10 @@ body.on-clan{background-color:#12141d}
   border:1px solid var(--line-2); border-radius:8px; padding:5px 6px; cursor:pointer}
 .mini-sprint:focus{border-color:var(--accent); outline:none}
 
+.goal-inp{width:56px; font-family:var(--mono); font-size:12px; background:var(--surface); color:var(--ink);
+  border:1px solid var(--line-2); border-radius:6px; padding:3px 6px}
+.goal-inp:focus{border-color:var(--accent); outline:none}
+
 .bulkbar{display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:var(--surface-2);
   border:1px solid var(--line); border-radius:12px; padding:8px 13px; margin-bottom:12px}
 .bulkbar .selall{font-family:var(--mono); font-size:11px; color:var(--ink-2); display:flex; align-items:center; gap:7px; cursor:pointer}
@@ -927,7 +931,28 @@ function fmtTS(ts){if(!ts)return '';var d=new Date(ts);var h=d.getHours(),m=d.ge
   return MONTHS_SHORT[d.getMonth()]+' '+d.getDate()+', '+h12+':'+(m<10?'0':'')+m+ap;}
 function sprintDates(n){var s=sprintDef(n);if(!s||(!s.start&&!s.end))return '';if(s.start&&s.end)return fmtD(s.start)+' \u2013 '+fmtD(s.end);return fmtD(s.start||s.end);}
 function firstSprint(){return (SPRINT_DEFS[0]&&SPRINT_DEFS[0].n)||1;}
+function lastSprint(){return (SPRINT_DEFS.length?SPRINT_DEFS[SPRINT_DEFS.length-1].n:firstSprint());}
 function saveSprints(){return setSetting('sprints',SPRINT_DEFS);}
+/* ---------- artist sprint goals/scores ---------- */
+// Each artist's goal is 3.5 completed characters per sprint = a 100 score.
+// Some sprints hand an artist harder (complex) characters, so the goal for a
+// given artist + sprint can be overridden (e.g. down to 3) rather than
+// hard-coding one number for everyone — the score formula itself never
+// changes: completed / goal * 100.
+var DEFAULT_ARTIST_GOAL=3.5;
+var ARTIST_GOALS={};
+function goalFor(sprintN,artist){var row=ARTIST_GOALS[sprintN];var g=row?row[artist]:null;return(g!=null&&g!=='')?Number(g):DEFAULT_ARTIST_GOAL;}
+function saveArtistGoals(){return setSetting('artistGoals',ARTIST_GOALS);}
+function setArtistGoal(sprintN,artist,val){
+  if(val==null||val===''||isNaN(val)){if(ARTIST_GOALS[sprintN]){delete ARTIST_GOALS[sprintN][artist];if(!Object.keys(ARTIST_GOALS[sprintN]).length)delete ARTIST_GOALS[sprintN];}}
+  else{ARTIST_GOALS[sprintN]=ARTIST_GOALS[sprintN]||{};ARTIST_GOALS[sprintN][artist]=Number(val);}
+  return saveArtistGoals();}
+function artistScoresFor(sprintN){var counts={};userNames().forEach(function(n){counts[n]=0;});
+  CHARS.forEach(function(c){if((c.sprint||1)!==sprintN||!isDone(c))return;
+    var credited={};var mb=modeledOf(c),tb=texturedOf(c);if(mb)credited[mb]=1;if(tb)credited[tb]=1;
+    Object.keys(credited).forEach(function(n){counts[n]=(counts[n]||0)+1;});});
+  return Object.keys(counts).sort().map(function(n){var done=counts[n],goal=goalFor(sprintN,n);
+    return{name:n,done:done,goal:goal,score:goal>0?Math.round(done/goal*100):0,overridden:!!(ARTIST_GOALS[sprintN]&&ARTIST_GOALS[sprintN][n]!=null)};});}
 var STAGES=[
   {key:'approved',label:'Image approved by Joseph',ab:'Approved'},
   {key:'modeling',label:'Image sent for modeling',ab:'Modeling'},
@@ -1321,11 +1346,12 @@ function openLightbox(gal,idx){if(!gal||!gal.length)return;idx=idx||0;
    review / history / image machinery as characters (those helpers only look
    at .id/.status/.review/.modeledBy/.texturedBy/.completed/.primaryImageId,
    never at clan-specific fields), so nothing above needed to change. */
-var taskState={search:'',category:'',modeler:'',texturer:''};
+var taskState={search:'',category:'',sprint:'',modeler:'',texturer:''};
 function renderTasksPage(){resetTheme();
-  taskState={search:'',category:'',modeler:'',texturer:''};
+  taskState={search:'',category:'',sprint:'',modeler:'',texturer:''};
   var catSet={};TASKS.forEach(function(t){if(t.category)catSet[t.category]=1;});
   var catOpts='<option value="">All categories</option>'+Object.keys(catSet).sort().map(function(cat){return '<option>'+esc(cat)+'</option>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'">Sprint '+s.n+' · '+esc(s.name)+'</option>';}).join('');
   var modelerOpts='<option value="">All modelers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
   var texturerOpts='<option value="">All texturers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
   APP.innerHTML='<header class="hero"><div class="wrap">'+memBanner()
@@ -1335,16 +1361,19 @@ function renderTasksPage(){resetTheme();
     +'<main class="wrap">'
     +'<div class="filters"><div class="search"><span class="mono" style="color:var(--bark)">⌕</span><input id="taskSearch" type="search" placeholder="Search tasks…"></div>'
     +'<label class="filt"><span>Category</span><select id="taskCategory" class="filt-sel">'+catOpts+'</select></label>'
+    +'<label class="filt"><span>Sprint</span><select id="taskSprintF" class="filt-sel">'+sprintOpts+'</select></label>'
     +'<label class="filt"><span>Modeler</span><select id="taskModeler" class="filt-sel">'+modelerOpts+'</select></label>'
     +'<label class="filt"><span>Texturer</span><select id="taskTexturer" class="filt-sel">'+texturerOpts+'</select></label></div>'
     +'<div class="count-note" id="taskCount"></div><div id="taskBody"></div></main>'+footer();
   el('taskSearch').addEventListener('input',function(){taskState.search=this.value.toLowerCase();paintTasksPage();});
   el('taskCategory').addEventListener('change',function(){taskState.category=this.value;paintTasksPage();});
+  el('taskSprintF').addEventListener('change',function(){taskState.sprint=this.value;paintTasksPage();});
   el('taskModeler').addEventListener('change',function(){taskState.modeler=this.value;paintTasksPage();});
   el('taskTexturer').addEventListener('change',function(){taskState.texturer=this.value;paintTasksPage();});
   paintTasksPage();startParticles('.hero',PARTICLE_CFG.home);window.scrollTo(0,0);}
 function matchTaskState(t){
   if(taskState.category&&(t.category||'')!==taskState.category)return false;
+  if(taskState.sprint&&(t.sprint||1)!==Number(taskState.sprint))return false;
   if(taskState.modeler&&modeledOf(t)!==taskState.modeler)return false;
   if(taskState.texturer&&texturedOf(t)!==taskState.texturer)return false;
   if(taskState.search){var s=taskState.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0)return false;}
@@ -1358,7 +1387,7 @@ function taskCardHTML(t){var img=primaryOf(t),imgs=IMAGES[t.id]||[];
   var thumb=img?'<img loading="lazy" src="'+img.data+'" alt="'+esc(t.name)+'">'+(imgs.length>1?'<span class="imgcount">'+imgs.length+' imgs</span>':''):'<div class="noimg"><span class="glyph">'+esc(t.name.charAt(0))+'</span><span>no art</span></div>';
   return '<button class="ccard'+(isDone(t)?' done':'')+'" data-tid="'+t.id+'"><div class="thumb">'+(isDone(t)?'<span class="done-badge">✓ Completed</span>':'')+thumb+'</div>'
     +'<div class="cbody"><h3 class="cname">'+esc(t.name)+'</h3>'
-    +'<div class="roles">'+(t.category?'<span class="role arch">'+esc(t.category)+'</span>':'<span class="role">Uncategorised</span>')+'</div>'
+    +'<div class="roles">'+(t.category?'<span class="role arch">'+esc(t.category)+'</span>':'<span class="role">Uncategorised</span>')+sprintTag(t)+'</div>'
     +statusPips(t)+'</div></button>';}
 function openTaskModal(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;var gal=galleryOf(t),s=statusOf(t);
   var galMain=gal.length?'<div class="gal-main"><img id="galImg" src="'+gal[0].data+'" alt="'+esc(t.name)+'"><button class="gal-expand" id="galExpand" title="View full screen">⛶</button></div>':'<div class="gal-main"><div class="gal-empty"><span class="glyph">'+esc(t.name.charAt(0))+'</span><span class="mono" style="font-size:11px">No art yet</span></div></div>';
@@ -1391,7 +1420,7 @@ function renderDashboard(){resetTheme();
   if(!CURRENT_USER)return renderLogin();
   if(CURRENT_USER===ADMIN_NAME&&!AUTHED)return renderLogin();
   var admin=isAdmin();var role=myRole();
-  var tabs=[{k:'roster',label:'Roster'},{k:'tasks',label:'Tasks'},{k:'analytics',label:'Analytics'}];
+  var tabs=[{k:'roster',label:'Roster'},{k:'tasks',label:'Tasks'},{k:'scores',label:'Scores'},{k:'analytics',label:'Analytics'}];
   if(admin)tabs=tabs.concat([{k:'home',label:'Front page'},{k:'security',label:'Users & access'},{k:'settings',label:'Settings & sync'}]);
   if(!tabs.some(function(t){return t.k===dashTab;}))dashTab='roster';
   var tabBar='<div class="cr-tabs">'+tabs.map(function(t){return '<button class="cr-tab'+(t.k===dashTab?' on':'')+'" data-tab="'+t.k+'">'+esc(t.label)+'</button>';}).join('')+'</div>';
@@ -1406,6 +1435,7 @@ function renderDashboard(){resetTheme();
 function setTab(t){dashTab=t;APP.querySelectorAll('[data-tab]').forEach(function(x){x.classList.toggle('on',x.getAttribute('data-tab')===t);});showTab(t);}
 function showTab(t){var c=el('crContent');if(!c)return;
   if(t==='tasks'){c.innerHTML='<div id="taskDashMount"></div>';renderTaskDash(el('taskDashMount'));return;}
+  if(t==='scores'){c.innerHTML='<div id="scoresMount"></div>';renderScoresDash(el('scoresMount'));return;}
   if(t==='analytics'){c.innerHTML='<div id="analyticsMount"></div>';renderAnalytics(el('analyticsMount'));return;}
   if(t==='home'&&isAdmin()){c.innerHTML='<div id="homeMount"></div>';renderHomeEditor();return;}
   if(t==='security'&&isAdmin()){c.innerHTML='<div id="securityMount"></div>';renderSecurity();return;}
@@ -1600,26 +1630,30 @@ function quickDelete(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)
   Promise.all(ops).then(loadCaches).then(function(){syncDelete(id,c.clan);toast('Unit removed');if(edit&&edit.id===id){edit=null;renderEditor(null);}paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
 
 /* ---------- tasks dashboard tab (independent of clans) ---------- */
-var taskDash={search:'',category:'',artist:'',onlyArt:false};
+var taskDash={search:'',category:'',sprint:'',artist:'',onlyArt:false};
 function renderTaskDash(c){if(!c)return;var admin=isAdmin();
   var catSet={};TASKS.forEach(function(t){if(t.category)catSet[t.category]=1;});
   var catOpts='<option value="">All categories</option>'+Object.keys(catSet).sort().map(function(cat){return '<option'+(taskDash.category===cat?' selected':'')+'>'+esc(cat)+'</option>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+(String(taskDash.sprint)===String(s.n)?' selected':'')+'>Sprint '+s.n+' · '+esc(s.name)+'</option>';}).join('');
   var artistOpts='<option value="">All assignees</option>'+userNames().map(function(n){return '<option'+(taskDash.artist===n?' selected':'')+'>'+esc(n)+'</option>';}).join('');
   c.innerHTML='<div class="dash-toolbar">'+(admin?'<button class="btn accent" id="btnNewTask">+ New task</button>':'')
       +'<div class="search" style="max-width:240px"><span class="mono" style="color:var(--bark)">⌕</span><input id="tSearch" type="search" placeholder="Search tasks…" value="'+esc(taskDash.search)+'"></div>'
       +'<label class="filt"><span>Category</span><select id="tCategory" class="filt-sel">'+catOpts+'</select></label>'
+      +'<label class="filt"><span>Sprint</span><select id="tSprint" class="filt-sel">'+sprintOpts+'</select></label>'
       +'<label class="filt"><span>Assignee</span><select id="tArtist" class="filt-sel">'+artistOpts+'</select></label>'
       +'<label class="chk"><input type="checkbox" id="tArt"'+(taskDash.onlyArt?' checked':'')+'> Only with art</label>'
       +'</div>'
     +'<div class="dash-grid"><div><div class="dash-list" id="taskList"></div></div><div id="taskEditorMount"></div></div>';
   el('tSearch').addEventListener('input',function(){taskDash.search=this.value.toLowerCase();paintTaskList();});
   el('tCategory').addEventListener('change',function(){taskDash.category=this.value;paintTaskList();});
+  el('tSprint').addEventListener('change',function(){taskDash.sprint=this.value;paintTaskList();});
   el('tArtist').addEventListener('change',function(){taskDash.artist=this.value;paintTaskList();});
   el('tArt').addEventListener('change',function(){taskDash.onlyArt=this.checked;paintTaskList();});
   var bn=el('btnNewTask');if(bn)bn.addEventListener('click',function(){startEditTask(null);});
   paintTaskList();renderTaskEditor(null);}
 function matchTask(t){
   if(taskDash.category&&t.category!==taskDash.category)return false;
+  if(taskDash.sprint&&(t.sprint||1)!==Number(taskDash.sprint))return false;
   if(taskDash.onlyArt&&!(IMAGES[t.id]||[]).length)return false;
   if(taskDash.artist&&modeledOf(t)!==taskDash.artist&&texturedOf(t)!==taskDash.artist)return false;
   if(taskDash.search){var s=taskDash.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0)return false;}
@@ -1635,7 +1669,7 @@ function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canS
   var body=list.map(function(t){var img=primaryOf(t),n=(IMAGES[t.id]||[]).length;
     var assign=(modeledOf(t)||texturedOf(t))?' · <span class="assign">M:'+esc(modeledOf(t)||'–')+' · T:'+esc(texturedOf(t)||'–')+'</span>':'';
     return '<div class="row'+(isDone(t)?' done':'')+'"><div class="rthumb">'+(img?'<img src="'+img.data+'">':esc(t.name.charAt(0)))+'</div>'
-      +'<div class="rmain"><b>'+esc(t.name)+(isDone(t)?' <span class="done-chip sm">✓</span>':'')+revTag(t)+'</b><div class="rmeta">'+(t.category?esc(t.category)+' · ':'Uncategorised · ')+(n?n+' img':'no images')+assign+'</div></div>'
+      +'<div class="rmain"><b>'+esc(t.name)+(isDone(t)?' <span class="done-chip sm">✓</span>':'')+revTag(t)+'</b><div class="rmeta">'+(t.category?esc(t.category)+' · ':'Uncategorised · ')+'S'+(t.sprint||1)+' · '+(n?n+' img':'no images')+assign+'</div></div>'
       +statusPips(t)+'<div class="ract">'+acts(t)+'</div></div>';}).join('');
   mount.innerHTML=body;
   mount.querySelectorAll('[data-tedit]').forEach(function(b){b.addEventListener('click',function(){startEditTask(b.getAttribute('data-tedit'));});});
@@ -1650,9 +1684,9 @@ function quickDeleteTask(id){var t=TASKS.find(function(x){return x.id===id;});if
 
 /* ---------- task editor (mirrors the character editor, trimmed to task fields) ---------- */
 var taskEdit=null;
-function blankTask(){return{id:null,name:'',category:'',images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',completed:false,review:{status:'',count:0,redos:0},history:[],createdAt:null};}
+function blankTask(){return{id:null,name:'',category:'',sprint:lastSprint(),images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',completed:false,review:{status:'',count:0,redos:0},history:[],createdAt:null};}
 function startEditTask(id){if(!id&&!isAdmin())return;if(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
-    taskEdit={id:t.id,name:t.name,category:t.category||'',images:(IMAGES[t.id]||[]).map(function(im){return{id:im.id,name:im.name,data:im.data,by:im.by||null,ts:im.ts,existing:true};}),
+    taskEdit={id:t.id,name:t.name,category:t.category||'',sprint:t.sprint||firstSprint(),images:(IMAGES[t.id]||[]).map(function(im){return{id:im.id,name:im.name,data:im.data,by:im.by||null,ts:im.ts,existing:true};}),
       primaryId:t.primaryImageId,status:Object.assign(defStatus(),t.status||{}),modeledBy:modeledOf(t),texturedBy:texturedOf(t),completed:isDone(t),history:(t.history||[]).slice(),createdAt:t.createdAt||null};
   }else taskEdit=blankTask();
   renderTaskEditor(taskEdit);var m=el('taskEditorMount');if(m)m.scrollIntoView({behavior:'smooth',block:'nearest'});}
@@ -1663,9 +1697,14 @@ function renderTaskEditor(e){var mount=el('taskEditorMount');if(!mount)return;
     var b=el('etNew');if(b)b.addEventListener('click',function(){startEditTask(null);});return;}
   var catList=[];var seen={};TASKS.forEach(function(t){if(t.category&&!seen[t.category]){seen[t.category]=1;catList.push(t.category);}});
   var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-tst="'+st.key+'"'+(e.status[st.key]?' checked':'')+'> '+esc(st.label)+'</label>';}).join('');
+  // Every sprint is listed, including old ones — this is the same global
+  // SPRINT_DEFS list characters use, so a task's sprint has no connection to
+  // any clan's own sprint count, and an admin can always backdate a task to
+  // a sprint that's already finished if they forgot to log it at the time.
+  var taskSprintOpts=SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+((e.sprint||1)===s.n?' selected':'')+'>Sprint '+s.n+' · '+esc(s.name)+'</option>';}).join('');
   mount.innerHTML='<div class="editor"><h3>'+(e.id?'Edit task':'New task')+'</h3><div class="esub">'+(e.id?esc(e.id):'unsaved')+'</div>'
     +'<div class="field"><label>Name</label><input id="tfName" value="'+esc(e.name)+'" placeholder="Task name, e.g. Riverside environment"></div>'
-    +'<div class="field"><label>Category</label><input id="tfCategory" list="tCatList" value="'+esc(e.category)+'" placeholder="e.g. Environment, Props, UI…"><datalist id="tCatList">'+catList.map(function(c){return '<option value="'+esc(c)+'">';}).join('')+'</datalist></div>'
+    +'<div class="grid2"><div class="field"><label>Category</label><input id="tfCategory" list="tCatList" value="'+esc(e.category)+'" placeholder="e.g. Environment, Props, UI…"><datalist id="tCatList">'+catList.map(function(c){return '<option value="'+esc(c)+'">';}).join('')+'</datalist></div><div class="field"><label>Sprint</label><select id="tfSprint">'+taskSprintOpts+'</select></div></div>'
     +'<div class="field"><label>Production status</label><div class="statboxes">'+statusBoxes+'</div></div>'
     +(isAdmin()
       ? '<div class="grid2"><div class="field"><label>Modeled by</label><select id="tfModeled">'+userOpts(e.modeledBy)+'</select></div><div class="field"><label>Textured by</label><select id="tfTextured">'+userOpts(e.texturedBy)+'</select></div></div>'
@@ -1675,7 +1714,7 @@ function renderTaskEditor(e){var mount=el('taskEditorMount');if(!mount)return;
     +'<div class="field"><label>Images ('+e.images.length+')</label><div class="dropzone" id="tdz"><div class="dz-glyph">⇪</div><p>Drop images or click to browse — multiple allowed</p></div><input type="file" id="tfImgs" accept="image/*" multiple hidden><div class="thumbs" id="timgThumbs"></div><div class="hint">Star = primary (card image). Large images are auto-resized.</div></div>'
     +historyBlock(e.history)
     +'<div class="editor-actions"><button class="btn accent" id="etSave">Save task</button>'+(e.id?'<button class="btn danger" id="etDel">Delete</button>':'')+'<button class="btn ghost" id="etCancel">Cancel</button></div></div>';
-  bindTF('tfName','name');bindTF('tfCategory','category');
+  bindTF('tfName','name');bindTF('tfCategory','category');bindTF('tfSprint','sprint',true);
   mount.querySelectorAll('[data-tst]').forEach(function(cb){cb.addEventListener('change',function(){if(!taskEdit)return;taskEdit.status[cb.getAttribute('data-tst')]=cb.checked;});});
   bindTF('tfModeled','modeledBy');bindTF('tfTextured','texturedBy');
   var fd=el('tfDone');if(fd)fd.addEventListener('change',function(){if(!taskEdit)return;taskEdit.completed=fd.checked;});
@@ -1688,7 +1727,7 @@ function renderTaskEditor(e){var mount=el('taskEditorMount');if(!mount)return;
   fi.addEventListener('change',function(){addTaskFiles(this.files);this.value='';});
   el('etSave').addEventListener('click',saveTaskEdit);el('etCancel').addEventListener('click',function(){taskEdit=null;renderTaskEditor(null);});
   var del=el('etDel');if(del)del.addEventListener('click',deleteTaskEdit);}
-function bindTF(id,key){var f=el(id);if(!f)return;function set(v){if(!taskEdit)return;taskEdit[key]=v;}
+function bindTF(id,key,num){var f=el(id);if(!f)return;function set(v){if(!taskEdit)return;taskEdit[key]=num?(v===''?'':Number(v)):v;}
   f.addEventListener('input',function(){set(this.value);});f.addEventListener('change',function(){set(this.value);});}
 function taskReviewBlock(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return '';var r=reviewOf(t);
   var lab=r.status==='in_review'?'In review':r.status==='approved'?'Approved':r.status==='rejected'?'Rejected · redo':'Not submitted';
@@ -1710,7 +1749,7 @@ function reviewActTask(id,act){var t=TASKS.find(function(x){return x.id===id;});
 function renderTaskStatusEditor(e,mount){var img=null;var t=TASKS.find(function(x){return x.id===e.id;});if(t)img=primaryOf(t);var editable=canStatus();var dis=editable?'':' disabled';
   var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-tst="'+st.key+'"'+(e.status[st.key]?' checked':'')+dis+'> '+esc(st.label)+'</label>';}).join('');
   mount.innerHTML='<div class="editor"><h3>'+(editable?'Update status':'View')+'</h3><div class="esub">'+(canReview()?'Review and update production status':editable?'You can update production status and add images':'Read-only ('+esc(myRole())+')')+'</div>'
-    +'<div class="se-head"><div class="se-thumb">'+(img?'<img src="'+img.data+'">':esc(e.name.charAt(0)))+'</div><div><div class="se-name">'+esc(e.name)+(e.completed?' <span class="done-chip sm">✓</span>':'')+'</div><div class="se-meta">'+(e.category?esc(e.category):'Uncategorised')+'</div></div></div>'
+    +'<div class="se-head"><div class="se-thumb">'+(img?'<img src="'+img.data+'">':esc(e.name.charAt(0)))+'</div><div><div class="se-name">'+esc(e.name)+(e.completed?' <span class="done-chip sm">✓</span>':'')+'</div><div class="se-meta">'+(e.category?esc(e.category):'Uncategorised')+' · Sprint '+(e.sprint||1)+'</div></div></div>'
     +'<div class="se-assign"><span>Modeled by <b>'+esc(e.modeledBy||'—')+'</b></span><span>Textured by <b>'+esc(e.texturedBy||'—')+'</b></span></div>'
     +'<div class="field"><label>Production status</label><div class="statboxes">'+statusBoxes+'</div></div>'
     +'<label class="statbox done-toggle"><input type="checkbox" id="tfDone"'+(e.completed?' checked':'')+dis+'> <b>Mark this task as completed</b></label>'
@@ -1745,7 +1784,7 @@ function addTaskFiles(files){if(!taskEdit)return;var arr=Array.prototype.slice.c
 function saveTaskEdit(){if(!taskEdit.name||!String(taskEdit.name).trim()){toast('Name is required');return;}
   var oldT=taskEdit.id?TASKS.find(function(x){return x.id===taskEdit.id;}):null;
   var id=taskEdit.id||('task-'+uid());
-  var rec={id:id,name:String(taskEdit.name).trim(),category:String(taskEdit.category||'').trim(),status:Object.assign(defStatus(),taskEdit.status),modeledBy:taskEdit.modeledBy||'',texturedBy:taskEdit.texturedBy||'',completed:!!taskEdit.completed,primaryImageId:taskEdit.primaryId,updatedAt:Date.now(),createdAt:(oldT&&oldT.createdAt)||taskEdit.createdAt||Date.now(),history:(oldT&&oldT.history)?oldT.history.slice():[]};
+  var rec={id:id,name:String(taskEdit.name).trim(),category:String(taskEdit.category||'').trim(),sprint:Number(taskEdit.sprint)||firstSprint(),status:Object.assign(defStatus(),taskEdit.status),modeledBy:taskEdit.modeledBy||'',texturedBy:taskEdit.texturedBy||'',completed:!!taskEdit.completed,primaryImageId:taskEdit.primaryId,updatedAt:Date.now(),createdAt:(oldT&&oldT.createdAt)||taskEdit.createdAt||Date.now(),history:(oldT&&oldT.history)?oldT.history.slice():[]};
   var ops=taskImageOps(id);
   if(rec.primaryImageId==null&&taskEdit.images.length)rec.primaryImageId=taskEdit.images[0].id;
   var newImgIds=taskEdit.images.map(function(im){return im.id;});
@@ -1759,6 +1798,7 @@ function saveTaskEdit(){if(!taskEdit.name||!String(taskEdit.name).trim()){toast(
     var removed=oldImgIds.filter(function(iid){return newImgIds.indexOf(iid)<0;}).length;
     var note=historyNote(oldStatus,rec.status,oldCompleted,rec.completed,added,removed);
     if(oldT.name!==rec.name)note=(note?note+', ':'')+'renamed to "'+rec.name+'"';
+    if((oldT.sprint||1)!==rec.sprint)note=(note?note+', ':'')+'moved to Sprint '+rec.sprint;
     pushHistory(rec,note);
   }
   ops.push(putTask(rec));
@@ -1776,6 +1816,45 @@ function saveTaskStatusOnly(){if(!taskEdit||!taskEdit.id)return;var t=TASKS.find
   Promise.all(ops).then(loadCaches).then(function(){toast('Status updated');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
 function deleteTaskEdit(){if(!taskEdit.id)return;if(!confirm('Delete "'+taskEdit.name+'" and its images?'))return;var id=taskEdit.id,ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
   Promise.all(ops).then(loadCaches).then(function(){toast('Task deleted');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Delete failed: '+err);});}
+
+/* ---------- sprint scores dashboard tab ---------- */
+// Each character's completion is credited to whoever is listed as Modeled-by
+// and/or Textured-by for it (usually the same person doing the full job).
+// Goal defaults to 3.5 completed characters per sprint = a 100 score; admin
+// can override an individual artist's goal for a specific sprint (e.g. down
+// to 3) when that sprint handed them unusually complex characters — the
+// score itself is always just completed ÷ goal × 100, never typed in directly.
+var scoresState={sprint:null};
+function renderScoresDash(c){if(!c)return;
+  if(!SPRINT_DEFS.length){c.innerHTML='<div class="empty-state"><div class="glyph">∅</div><p>No sprints set up yet — add one in Settings &amp; sync → Sprints.</p></div>';return;}
+  if(scoresState.sprint==null||!sprintDef(scoresState.sprint))scoresState.sprint=lastSprint();
+  var sprintOpts=SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+(scoresState.sprint===s.n?' selected':'')+'>Sprint '+s.n+' · '+esc(s.name)+'</option>';}).join('');
+  var dt=sprintDates(scoresState.sprint);
+  c.innerHTML='<div class="dash-toolbar"><label class="filt"><span>Sprint</span><select id="scoreSprint" class="filt-sel">'+sprintOpts+'</select></label>'
+      +(dt?'<span class="hint">'+esc(dt)+'</span>':'')+'<span style="flex:1"></span>'
+      +'<span class="hint">Goal: <b>'+DEFAULT_ARTIST_GOAL+'</b> completed characters per sprint = 100 score'+(isAdmin()?' · click a goal to adjust it for complex work':'')+'</span></div>'
+    +'<div id="scoreBody"></div>';
+  el('scoreSprint').addEventListener('change',function(){scoresState.sprint=Number(this.value);paintScores();});
+  paintScores();}
+function paintScores(){var mount=el('scoreBody');if(!mount)return;var sprintN=scoresState.sprint,admin=isAdmin();
+  var rows=artistScoresFor(sprintN);
+  if(!rows.length){mount.innerHTML='<div class="empty-state"><div class="glyph">∅</div><p>No artists set up yet — add people in Users &amp; access.</p></div>';return;}
+  mount.innerHTML='<div class="an-artists" style="margin-top:0;border-top:none;padding-top:0">'+rows.map(function(r){
+    var goalField=admin
+      ? '<input type="number" class="goal-inp" step="0.5" min="0" data-goal-artist="'+esc(r.name)+'" value="'+r.goal+'">'
+      : '<b>'+r.goal+'</b>';
+    return '<div class="artist-row"><span class="ar-name"><span class="uw-ava sm">'+esc(initials(r.name))+'</span>'+esc(r.name)+'</span>'
+      +'<span class="ar-stat">Completed <b>'+r.done+'</b></span>'
+      +'<span class="ar-stat">Goal '+goalField+(r.overridden?' <button class="btn ghost xs" data-goal-reset="'+esc(r.name)+'" title="Reset to the default '+DEFAULT_ARTIST_GOAL+'">↺</button>':'')+'</span>'
+      +'<div class="astat-bar" style="flex:1;min-width:90px"><i style="width:'+Math.min(r.score,100)+'%;background:'+(r.score>=100?'var(--glow)':'var(--accent)')+'"></i></div>'
+      +'<span class="ar-stat'+(r.score>=100?' done':'')+'"><b>'+r.score+'%</b></span></div>';
+  }).join('')+'</div>';
+  mount.querySelectorAll('[data-goal-artist]').forEach(function(inp){inp.addEventListener('change',function(){
+    var name=inp.getAttribute('data-goal-artist'),v=inp.value===''?null:Number(inp.value);
+    setArtistGoal(sprintN,name,v).then(function(){toast('Goal updated for '+name);paintScores();}).catch(function(err){toast('Update failed: '+err);});});});
+  mount.querySelectorAll('[data-goal-reset]').forEach(function(b){b.addEventListener('click',function(){
+    var name=b.getAttribute('data-goal-reset');
+    setArtistGoal(sprintN,name,null).then(function(){toast('Goal reset for '+name);paintScores();}).catch(function(err){toast('Update failed: '+err);});});});}
 
 /* ---------- settings / sheet sync panel ---------- */
 function showSettings(){if(!isAdmin())return;var mount=el('settingsMount');if(!mount)return;
@@ -1836,7 +1915,7 @@ function deleteClan(id){if(!CLAN_META[id])return;if(CLAN_ORDER.length<=1){toast(
     if(dash.clan===id)dash.clan='';
     return saveClans();}).then(function(){toast('Clan deleted');renderClans();if(el('dashList'))paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
 function renderSprints(){var m=el('sprintsMount');if(!m)return;
-  m.innerHTML='<h3 style="font-size:16px;margin:0 0 4px">Sprints</h3><div class="hint" style="margin:0 0 10px">Name each sprint, set its start &amp; end dates, and add as many as you need.</div>'
+  m.innerHTML='<h3 style="font-size:16px;margin:0 0 4px">Sprints</h3><div class="hint" style="margin:0 0 10px">Name each sprint, set its start &amp; end dates, and add as many as you need. Setting a start date fills in a two-week end date automatically \u2014 adjust it if a sprint runs longer or shorter.</div>'
     +'<div class="sprint-rows">'+SPRINT_DEFS.map(function(s){return '<div class="sprint-row"><span class="sprint-badge s'+s.n+'">Sprint '+s.n+'</span>'
       +'<input class="sp-name" data-sp="'+s.n+'" value="'+esc(s.name)+'" placeholder="Sprint name">'
       +'<input class="sp-date" type="date" data-sps="'+s.n+'" value="'+esc(s.start||'')+'" title="Start date">'
@@ -1845,7 +1924,10 @@ function renderSprints(){var m=el('sprintsMount');if(!m)return;
     +'<div class="panel-row" style="margin-top:10px"><button class="btn accent sm" id="addSprint">+ Add sprint</button></div>';
   function upd(n,k,v){for(var i=0;i<SPRINT_DEFS.length;i++)if(SPRINT_DEFS[i].n===n)SPRINT_DEFS[i][k]=v;}
   m.querySelectorAll('.sp-name').forEach(function(inp){inp.addEventListener('change',function(){upd(Number(inp.getAttribute('data-sp')),'name',inp.value.trim()||('Sprint '+inp.getAttribute('data-sp')));saveSprints().then(function(){toast('Sprint saved');});});});
-  m.querySelectorAll('[data-sps]').forEach(function(inp){inp.addEventListener('change',function(){upd(Number(inp.getAttribute('data-sps')),'start',inp.value);saveSprints();});});
+  m.querySelectorAll('[data-sps]').forEach(function(inp){inp.addEventListener('change',function(){var n=Number(inp.getAttribute('data-sps'));upd(n,'start',inp.value);
+    // Our sprints usually run two weeks \u2014 if there's no end date yet, suggest one 13 days out (14-day span) rather than leaving the admin to compute it by hand.
+    var s=sprintDef(n);if(s&&inp.value&&!s.end){var d=new Date(inp.value+'T00:00:00');d.setDate(d.getDate()+13);var end=d.toISOString().slice(0,10);upd(n,'end',end);var ei=m.querySelector('[data-spe="'+n+'"]');if(ei)ei.value=end;}
+    saveSprints();});});
   m.querySelectorAll('[data-spe]').forEach(function(inp){inp.addEventListener('change',function(){upd(Number(inp.getAttribute('data-spe')),'end',inp.value);saveSprints();});});
   el('addSprint').addEventListener('click',function(){var mx=0;SPRINT_DEFS.forEach(function(s){if(s.n>mx)mx=s.n;});SPRINT_DEFS.push({n:mx+1,name:'Sprint '+(mx+1),start:'',end:''});saveSprints().then(function(){toast('Sprint added');renderSprints();});});
   m.querySelectorAll('[data-sp-del]').forEach(function(b){b.addEventListener('click',function(){var n=Number(b.getAttribute('data-sp-del'));var used=CHARS.filter(function(c){return (c.sprint||1)===n;}).length;
@@ -2119,6 +2201,7 @@ function boot(){APP=el('app');
     return getSetting('sprints');}).then(function(sp){SPRINT_DEFS=(sp&&sp.length)?sp:DEFAULT_SPRINTS.slice();
     SPRINT_DEFS=SPRINT_DEFS.map(function(s){if(s.start==null)s.start='';if(s.end==null)s.end='';return s;});
     CURRENT_USER=userGet();renderUserWidget();
+    return getSetting('artistGoals');}).then(function(ag){ARTIST_GOALS=(ag&&typeof ag==='object')?ag:{};
     return getSetting('clans');}).then(function(cl){if(cl&&cl.order&&cl.order.length&&cl.meta){
       Object.keys(CLAN_META).forEach(function(k){delete CLAN_META[k];});
       Object.keys(cl.meta).forEach(function(k){CLAN_META[k]=cl.meta[k];});

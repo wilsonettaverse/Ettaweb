@@ -4,7 +4,7 @@ exports.handler = async (event) => {
   connectLambda(event);
   if (event.httpMethod !== 'GET') return json(405, { error: 'Method not allowed' });
   try {
-    const [characters, tasks, imagesMeta, sheetUrl, adminEmail, users, sprints, clans, homeText, auth] = await Promise.all([
+    const [characters, tasks, imagesMeta, sheetUrl, adminEmail, users, sprints, artistGoals, clans, homeText, auth] = await Promise.all([
       getCharacters(),
       getTasks(),
       getImagesMeta(),
@@ -12,6 +12,7 @@ exports.handler = async (event) => {
       getSettingRaw('adminEmail'),
       getSettingRaw('users'),
       getSettingRaw('sprints'),
+      getSettingRaw('artistGoals'),
       getSettingRaw('clans'),
       getSettingRaw('homeText'),
       getSettingRaw('auth')
@@ -28,6 +29,7 @@ exports.handler = async (event) => {
         adminEmail: adminEmail || '',
         users: users || null,
         sprints: sprints || null,
+        artistGoals: artistGoals || null,
         clans: clans || null,
         homeText: homeText || null,
         hasAdminPassword: !!(auth && auth.hash)
