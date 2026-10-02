@@ -1006,6 +1006,18 @@ function canStatus(){var r=myRole();return r==='Admin'||r==='Reviewer'||r==='Art
 function isViewer(){return myRole()==='Viewer';}
 function reviewOf(c){return c.review||{status:'',count:0,redos:0};}
 
+/* ---------- pinning an existing clan character into Tasks ----------
+   A character "added to Tasks" is never copied — it's the exact same
+   CHARS record, just flagged with pinnedToTasks:true so it also shows up
+   in the Tasks views. Every generic helper above (modeledOf, isDone,
+   statusOf, reviewOf, primaryOf…) already reads only fields characters
+   and tasks share, so a pinned character slots into the Tasks list and
+   filters with no translation layer — and since every edit still goes
+   through putChar()/the real character editor, the clan page and the
+   Tasks views can never drift out of sync. */
+function isCharEntry(x){return !!(x&&x.clan!=null);}
+function allTaskLikeEntries(){return TASKS.concat(CHARS.filter(function(c){return c.pinnedToTasks;}));}
+
 /* ============================================================ STORAGE (server-backed via Netlify Functions + Blobs) */
 /* Everyone who opens this site shares one roster now: reads are public, writes
    need a signed-in session (see AUTH below). REMOTE mirrors the server; the
@@ -1304,7 +1316,7 @@ function openModal(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)re
   function close(){back.remove();document.body.style.overflow='';}
   back.addEventListener('click',function(e){if(e.target===back)close();});
   back.querySelector('#mClose').addEventListener('click',close);
-  back.querySelector('#mEdit').addEventListener('click',function(){close();location.hash='#/dashboard';setTimeout(function(){if(el('editorMount'))startEdit(c.id);},80);});
+  back.querySelector('#mEdit').addEventListener('click',function(){close();dashTab='roster';location.hash='#/dashboard';setTimeout(function(){if(el('editorMount'))startEdit(c.id);},80);});
   var curIdx=0;
   var tb=back.querySelectorAll('.gal-thumbs button');tb.forEach(function(b){b.addEventListener('click',function(){curIdx=+b.getAttribute('data-idx');back.querySelector('#galImg').src=b.getAttribute('data-src');tb.forEach(function(x){x.classList.remove('active');});b.classList.add('active');});});
   var gi=back.querySelector('#galImg'),ge=back.querySelector('#galExpand');
@@ -1378,16 +1390,19 @@ function matchTaskState(t){
   if(taskState.texturer&&texturedOf(t)!==taskState.texturer)return false;
   if(taskState.search){var s=taskState.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0)return false;}
   return true;}
-function paintTasksPage(){var list=TASKS.filter(matchTaskState);
+function paintTasksPage(){var list=allTaskLikeEntries().filter(matchTaskState);
   el('taskCount').textContent=list.length+' task'+(list.length===1?'':'s')+' shown';
   var body=el('taskBody');
   body.innerHTML=list.length?'<div class="card-grid">'+list.map(taskCardHTML).join('')+'</div>':'<div class="empty-state"><div class="glyph">∅</div><p>No tasks match these filters.</p></div>';
-  body.querySelectorAll('.ccard').forEach(function(card){card.addEventListener('click',function(){openTaskModal(card.getAttribute('data-tid'));});});}
-function taskCardHTML(t){var img=primaryOf(t),imgs=IMAGES[t.id]||[];
+  body.querySelectorAll('.ccard').forEach(function(card){card.addEventListener('click',function(){
+    var id=card.getAttribute('data-tid');
+    if(card.getAttribute('data-ischar')==='1')openModal(id);else openTaskModal(id);});});}
+function taskCardHTML(t){var img=primaryOf(t),imgs=IMAGES[t.id]||[],isChar=isCharEntry(t);
   var thumb=img?'<img loading="lazy" src="'+img.data+'" alt="'+esc(t.name)+'">'+(imgs.length>1?'<span class="imgcount">'+imgs.length+' imgs</span>':''):'<div class="noimg"><span class="glyph">'+esc(t.name.charAt(0))+'</span><span>no art</span></div>';
-  return '<button class="ccard'+(isDone(t)?' done':'')+'" data-tid="'+t.id+'"><div class="thumb">'+(isDone(t)?'<span class="done-badge">✓ Completed</span>':'')+thumb+'</div>'
+  var tag=isChar?'<span class="role arch">From '+esc(CLAN_META[t.clan]?CLAN_META[t.clan].name:t.clan)+'</span>':(t.category?'<span class="role arch">'+esc(t.category)+'</span>':'<span class="role">Uncategorised</span>');
+  return '<button class="ccard'+(isDone(t)?' done':'')+'" data-tid="'+t.id+'" data-ischar="'+(isChar?1:0)+'"><div class="thumb">'+(isDone(t)?'<span class="done-badge">✓ Completed</span>':'')+thumb+'</div>'
     +'<div class="cbody"><h3 class="cname">'+esc(t.name)+'</h3>'
-    +'<div class="roles">'+(t.category?'<span class="role arch">'+esc(t.category)+'</span>':'<span class="role">Uncategorised</span>')+sprintTag(t)+'</div>'
+    +'<div class="roles">'+tag+sprintTag(t)+'</div>'
     +statusPips(t)+'</div></button>';}
 function openTaskModal(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;var gal=galleryOf(t),s=statusOf(t);
   var galMain=gal.length?'<div class="gal-main"><img id="galImg" src="'+gal[0].data+'" alt="'+esc(t.name)+'"><button class="gal-expand" id="galExpand" title="View full screen">⛶</button></div>':'<div class="gal-main"><div class="gal-empty"><span class="glyph">'+esc(t.name.charAt(0))+'</span><span class="mono" style="font-size:11px">No art yet</span></div></div>';
@@ -1636,13 +1651,14 @@ function renderTaskDash(c){if(!c)return;var admin=isAdmin();
   var catOpts='<option value="">All categories</option>'+Object.keys(catSet).sort().map(function(cat){return '<option'+(taskDash.category===cat?' selected':'')+'>'+esc(cat)+'</option>';}).join('');
   var sprintOpts='<option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+(String(taskDash.sprint)===String(s.n)?' selected':'')+'>Sprint '+s.n+' · '+esc(s.name)+'</option>';}).join('');
   var artistOpts='<option value="">All assignees</option>'+userNames().map(function(n){return '<option'+(taskDash.artist===n?' selected':'')+'>'+esc(n)+'</option>';}).join('');
-  c.innerHTML='<div class="dash-toolbar">'+(admin?'<button class="btn accent" id="btnNewTask">+ New task</button>':'')
+  c.innerHTML='<div class="dash-toolbar">'+(admin?'<button class="btn accent" id="btnNewTask">+ New task</button><button class="btn ghost" id="btnAddCharTask">+ Add existing character</button>':'')
       +'<div class="search" style="max-width:240px"><span class="mono" style="color:var(--bark)">⌕</span><input id="tSearch" type="search" placeholder="Search tasks…" value="'+esc(taskDash.search)+'"></div>'
       +'<label class="filt"><span>Category</span><select id="tCategory" class="filt-sel">'+catOpts+'</select></label>'
       +'<label class="filt"><span>Sprint</span><select id="tSprint" class="filt-sel">'+sprintOpts+'</select></label>'
       +'<label class="filt"><span>Assignee</span><select id="tArtist" class="filt-sel">'+artistOpts+'</select></label>'
       +'<label class="chk"><input type="checkbox" id="tArt"'+(taskDash.onlyArt?' checked':'')+'> Only with art</label>'
       +'</div>'
+    +(admin?'<div id="addCharMount"></div>':'')
     +'<div class="dash-grid"><div><div class="dash-list" id="taskList"></div></div><div id="taskEditorMount"></div></div>';
   el('tSearch').addEventListener('input',function(){taskDash.search=this.value.toLowerCase();paintTaskList();});
   el('tCategory').addEventListener('change',function(){taskDash.category=this.value;paintTaskList();});
@@ -1650,33 +1666,68 @@ function renderTaskDash(c){if(!c)return;var admin=isAdmin();
   el('tArtist').addEventListener('change',function(){taskDash.artist=this.value;paintTaskList();});
   el('tArt').addEventListener('change',function(){taskDash.onlyArt=this.checked;paintTaskList();});
   var bn=el('btnNewTask');if(bn)bn.addEventListener('click',function(){startEditTask(null);});
+  var bac=el('btnAddCharTask');if(bac)bac.addEventListener('click',toggleAddCharPanel);
   paintTaskList();renderTaskEditor(null);}
 function matchTask(t){
-  if(taskDash.category&&t.category!==taskDash.category)return false;
+  if(taskDash.category&&(t.category||'')!==taskDash.category)return false;
   if(taskDash.sprint&&(t.sprint||1)!==Number(taskDash.sprint))return false;
   if(taskDash.onlyArt&&!(IMAGES[t.id]||[]).length)return false;
   if(taskDash.artist&&modeledOf(t)!==taskDash.artist&&texturedOf(t)!==taskDash.artist)return false;
   if(taskDash.search){var s=taskDash.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0)return false;}
   return true;}
-function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canStatus();var list=TASKS.filter(matchTask);
+function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canStatus();var list=allTaskLikeEntries().filter(matchTask);
   if(!list.length){mount.innerHTML='<div class="empty-state"><div class="glyph">∅</div><p>No tasks match. Adjust the search or filters above, or add one.</p></div>';return;}
   function revTag(t){var r=reviewOf(t);if(!r.status&&!r.count&&!r.redos)return '';var lab=r.status==='approved'?'✓ reviewed':r.status==='rejected'?'redo':r.status==='in_review'?'in review':'';return '<span class="rev-mini '+(r.status||'')+'">'+(lab?lab:'')+(r.count?(lab?' · ':'')+r.count+' rev':'')+(r.redos?' ↺'+r.redos:'')+'</span>';}
-  function acts(t){var b='';
-    if(canS)b+='<button class="btn '+(isDone(t)?'accent':'ghost')+' sm" data-tdone="'+t.id+'">'+(isDone(t)?'✓ Done':'Mark done')+'</button>';
-    b+='<button class="btn ghost sm" data-tedit="'+t.id+'">'+(isAdmin()?'Edit':canS?'Status':'View')+'</button>';
-    if(isAdmin())b+='<button class="btn danger xs" data-tdel="'+t.id+'" title="Remove task" aria-label="Remove">✕</button>';
+  function acts(t){var isChar=isCharEntry(t),b='';
+    if(canS)b+='<button class="btn '+(isDone(t)?'accent':'ghost')+' sm" data-tdone="'+t.id+'" data-ischar="'+(isChar?1:0)+'">'+(isDone(t)?'✓ Done':'Mark done')+'</button>';
+    b+='<button class="btn ghost sm" data-tedit="'+t.id+'" data-ischar="'+(isChar?1:0)+'">'+(isAdmin()?'Edit':canS?'Status':'View')+'</button>';
+    if(isAdmin()){
+      if(isChar)b+='<button class="btn ghost xs" data-tunpin="'+t.id+'" title="Remove from Tasks — keeps the character in its clan">✕</button>';
+      else b+='<button class="btn danger xs" data-tdel="'+t.id+'" title="Remove task" aria-label="Remove">✕</button>';
+    }
     return b;}
-  var body=list.map(function(t){var img=primaryOf(t),n=(IMAGES[t.id]||[]).length;
+  var body=list.map(function(t){var img=primaryOf(t),n=(IMAGES[t.id]||[]).length,isChar=isCharEntry(t);
     var assign=(modeledOf(t)||texturedOf(t))?' · <span class="assign">M:'+esc(modeledOf(t)||'–')+' · T:'+esc(texturedOf(t)||'–')+'</span>':'';
+    var tag=isChar?'From '+esc(CLAN_META[t.clan]?CLAN_META[t.clan].name:t.clan)+' · ':(t.category?esc(t.category)+' · ':'Uncategorised · ');
     return '<div class="row'+(isDone(t)?' done':'')+'"><div class="rthumb">'+(img?'<img src="'+img.data+'">':esc(t.name.charAt(0)))+'</div>'
-      +'<div class="rmain"><b>'+esc(t.name)+(isDone(t)?' <span class="done-chip sm">✓</span>':'')+revTag(t)+'</b><div class="rmeta">'+(t.category?esc(t.category)+' · ':'Uncategorised · ')+'S'+(t.sprint||1)+' · '+(n?n+' img':'no images')+assign+'</div></div>'
+      +'<div class="rmain"><b>'+esc(t.name)+(isDone(t)?' <span class="done-chip sm">✓</span>':'')+revTag(t)+'</b><div class="rmeta">'+tag+'S'+(t.sprint||1)+' · '+(n?n+' img':'no images')+assign+'</div></div>'
       +statusPips(t)+'<div class="ract">'+acts(t)+'</div></div>';}).join('');
   mount.innerHTML=body;
-  mount.querySelectorAll('[data-tedit]').forEach(function(b){b.addEventListener('click',function(){startEditTask(b.getAttribute('data-tedit'));});});
+  mount.querySelectorAll('[data-tedit]').forEach(function(b){b.addEventListener('click',function(){
+    var id=b.getAttribute('data-tedit');
+    if(b.getAttribute('data-ischar')==='1'){setTab('roster');setTimeout(function(){startEdit(id);},60);}
+    else startEditTask(id);});});
   mount.querySelectorAll('[data-tdel]').forEach(function(b){b.addEventListener('click',function(){quickDeleteTask(b.getAttribute('data-tdel'));});});
-  mount.querySelectorAll('[data-tdone]').forEach(function(b){b.addEventListener('click',function(){toggleTaskComplete(b.getAttribute('data-tdone'));});});}
+  mount.querySelectorAll('[data-tunpin]').forEach(function(b){b.addEventListener('click',function(){unpinCharFromTasks(b.getAttribute('data-tunpin'));});});
+  mount.querySelectorAll('[data-tdone]').forEach(function(b){b.addEventListener('click',function(){
+    var id=b.getAttribute('data-tdone');
+    if(b.getAttribute('data-ischar')==='1')toggleCharInTasks(id);else toggleTaskComplete(id);});});}
 function toggleTaskComplete(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;t.completed=!t.completed;t.updatedAt=Date.now();
   putTask(t).then(loadCaches).then(function(){toast(t.completed?'Marked completed':'Marked incomplete');paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
+function toggleCharInTasks(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;c.completed=!c.completed;c.updatedAt=Date.now();
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast(c.completed?'Marked completed':'Marked incomplete');paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
+/* ---------- adding an existing clan character into the Tasks list ---------- */
+var addCharState={search:''};
+function toggleAddCharPanel(){var m=el('addCharMount');if(!m)return;if(m.dataset.open){m.dataset.open='';m.innerHTML='';return;}m.dataset.open='1';addCharState.search='';renderAddCharPanel();}
+function renderAddCharPanel(){var m=el('addCharMount');if(!m||!m.dataset.open)return;
+  var avail=CHARS.filter(function(c){return !c.pinnedToTasks;});
+  if(addCharState.search){var s=addCharState.search;avail=avail.filter(function(c){return c.name.toLowerCase().indexOf(s)>=0;});}
+  var shown=avail.slice(0,40);
+  m.innerHTML='<div class="panel" style="margin:10px 0"><h3 style="font-size:14px;margin:0 0 6px">Add an existing character to Tasks</h3>'
+    +'<div class="hint" style="margin:0 0 8px">This pulls a character from its clan into the Tasks views so you can track it here too — it’s the same record, not a copy. Any status, image or assignment change made from here updates the character in its clan, and vice versa.</div>'
+    +'<input id="addCharSearch" placeholder="Search characters by name…" value="'+esc(addCharState.search)+'" style="margin-bottom:8px;max-width:320px">'
+    +'<div class="sprint-rows" style="max-height:260px;overflow:auto">'+(shown.length?shown.map(function(c){var m2=CLAN_META[c.clan]||{};
+      return '<div class="sprint-row"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:2px;background:'+(m2.accent||'#888')+'"></span><span style="flex:1">'+esc(c.name)+'</span><span class="hint" style="margin:0 8px">'+esc(m2.name||c.clan)+' · #'+c.num+'</span><button class="btn accent xs" data-addchar="'+c.id+'">+ Add</button></div>';
+    }).join(''):'<div class="hint">'+(avail.length?'No match for that search.':'Every character is already in Tasks.')+'</div>')
+    +(avail.length>shown.length?'<div class="hint" style="margin-top:6px">+'+(avail.length-shown.length)+' more — narrow your search to see them.</div>':'')+'</div></div>';
+  el('addCharSearch').addEventListener('input',function(){addCharState.search=this.value.toLowerCase();renderAddCharPanel();});
+  m.querySelectorAll('[data-addchar]').forEach(function(b){b.addEventListener('click',function(){pinCharToTasks(b.getAttribute('data-addchar'));});});}
+function pinCharToTasks(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;c.pinnedToTasks=true;c.updatedAt=Date.now();
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast('"'+c.name+'" added to Tasks');paintTaskList();renderAddCharPanel();}).catch(function(err){toast('Update failed: '+err);});}
+function unpinCharFromTasks(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
+  if(!confirm('Remove "'+c.name+'" from Tasks? The character itself stays untouched in its clan.'))return;
+  c.pinnedToTasks=false;c.updatedAt=Date.now();
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast('Removed from Tasks');paintTaskList();renderAddCharPanel();}).catch(function(err){toast('Update failed: '+err);});}
 function quickDeleteTask(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
   if(!confirm('Remove "'+t.name+'" and its images? This cannot be undone.'))return;
   var ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
@@ -2123,7 +2174,13 @@ function parseStats(s){if(!s)return null;var p=String(s).split('/');if(p.length!
 function saveEdit(){if(!edit.name||!String(edit.name).trim()){toast('Name is required');return;}
   var oldC=edit.id?CHARS.find(function(x){return x.id===edit.id;}):null;
   var id=edit.id||(edit.clan+'-new-'+uid());
-  var rec={id:id,clan:edit.clan,num:Number(edit.num)||0,name:String(edit.name).trim(),mana:Number(edit.mana)||0,arch:edit.arch,type:edit.type,tier:edit.tier,sprint:Number(edit.sprint)||1,gender:edit.gender||'',height:edit.height||'',l1:edit.l1,l6:edit.l6,l12:edit.l12,stats:parseStats(edit.l12),abilities:edit.abilities.slice(),status:Object.assign(defStatus(),edit.status),modeledBy:edit.modeledBy||'',texturedBy:edit.texturedBy||'',completed:!!edit.completed,primaryImageId:edit.primaryId,updatedAt:Date.now(),history:(oldC&&oldC.history)?oldC.history.slice():[]};
+  var rec={id:id,clan:edit.clan,num:Number(edit.num)||0,name:String(edit.name).trim(),mana:Number(edit.mana)||0,arch:edit.arch,type:edit.type,tier:edit.tier,sprint:Number(edit.sprint)||1,gender:edit.gender||'',height:edit.height||'',l1:edit.l1,l6:edit.l6,l12:edit.l12,stats:parseStats(edit.l12),abilities:edit.abilities.slice(),status:Object.assign(defStatus(),edit.status),modeledBy:edit.modeledBy||'',texturedBy:edit.texturedBy||'',completed:!!edit.completed,primaryImageId:edit.primaryId,updatedAt:Date.now(),
+    // Carried over rather than rebuilt from the edit form, same as history below:
+    // pinnedToTasks isn't a field this editor exposes, so without this the record
+    // rebuilt here would silently drop a character back out of the Tasks views
+    // every time it's saved from the normal character editor.
+    pinnedToTasks:!!(oldC&&oldC.pinnedToTasks),
+    history:(oldC&&oldC.history)?oldC.history.slice():[]};
   var ops=imageOps(id);
   if(rec.primaryImageId==null&&edit.images.length)rec.primaryImageId=edit.images[0].id;
   var newImgIds=edit.images.map(function(im){return im.id;});
