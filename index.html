@@ -1921,7 +1921,9 @@ function renderSprints(){var m=el('sprintsMount');if(!m)return;
       +'<input class="sp-date" type="date" data-sps="'+s.n+'" value="'+esc(s.start||'')+'" title="Start date">'
       +'<input class="sp-date" type="date" data-spe="'+s.n+'" value="'+esc(s.end||'')+'" title="End date">'
       +(SPRINT_DEFS.length>1?'<button class="btn danger xs" data-sp-del="'+s.n+'" title="Remove sprint">\u2715</button>':'')+'</div>';}).join('')+'</div>'
-    +'<div class="panel-row" style="margin-top:10px"><button class="btn accent sm" id="addSprint">+ Add sprint</button></div>';
+    +'<div class="panel-row" style="margin-top:10px"><button class="btn accent sm" id="addSprint">+ Add sprint</button>'
+      +'<input id="sprintUpTo" type="number" min="1" placeholder="e.g. 30" style="width:80px">'
+      +'<button class="btn ghost sm" id="addSprintsUpTo">Fill up to sprint #</button></div>';
   function upd(n,k,v){for(var i=0;i<SPRINT_DEFS.length;i++)if(SPRINT_DEFS[i].n===n)SPRINT_DEFS[i][k]=v;}
   m.querySelectorAll('.sp-name').forEach(function(inp){inp.addEventListener('change',function(){upd(Number(inp.getAttribute('data-sp')),'name',inp.value.trim()||('Sprint '+inp.getAttribute('data-sp')));saveSprints().then(function(){toast('Sprint saved');});});});
   m.querySelectorAll('[data-sps]').forEach(function(inp){inp.addEventListener('change',function(){var n=Number(inp.getAttribute('data-sps'));upd(n,'start',inp.value);
@@ -1930,6 +1932,29 @@ function renderSprints(){var m=el('sprintsMount');if(!m)return;
     saveSprints();});});
   m.querySelectorAll('[data-spe]').forEach(function(inp){inp.addEventListener('change',function(){upd(Number(inp.getAttribute('data-spe')),'end',inp.value);saveSprints();});});
   el('addSprint').addEventListener('click',function(){var mx=0;SPRINT_DEFS.forEach(function(s){if(s.n>mx)mx=s.n;});SPRINT_DEFS.push({n:mx+1,name:'Sprint '+(mx+1),start:'',end:''});saveSprints().then(function(){toast('Sprint added');renderSprints();});});
+  el('addSprintsUpTo').addEventListener('click',function(){
+    var target=Number(el('sprintUpTo').value);
+    if(!target||target<1){toast('Enter a sprint number to fill up to');return;}
+    var mx=0;SPRINT_DEFS.forEach(function(s){if(s.n>mx)mx=s.n;});
+    if(target<=mx){toast('Sprint '+target+' already exists');return;}
+    // Jumping from a handful of sprints to the dozens is tedious one at a time —
+    // this fills in every sprint in between at once, chaining each one's dates
+    // two weeks off the last so a long run gets sensible placeholders rather
+    // than being left blank. Names and dates can still be adjusted individually.
+    var last=SPRINT_DEFS.length?SPRINT_DEFS[SPRINT_DEFS.length-1]:null;
+    var cursor=(last&&(last.end||last.start))?new Date((last.end||last.start)+'T00:00:00'):new Date();
+    if(last&&last.end)cursor.setDate(cursor.getDate()+1);
+    var added=0;
+    for(var n=mx+1;n<=target;n++){
+      var start=cursor.toISOString().slice(0,10);
+      var endD=new Date(cursor);endD.setDate(endD.getDate()+13);
+      var end=endD.toISOString().slice(0,10);
+      SPRINT_DEFS.push({n:n,name:'Sprint '+n,start:start,end:end});
+      cursor=new Date(endD);cursor.setDate(cursor.getDate()+1);
+      added++;
+    }
+    saveSprints().then(function(){toast('Added '+added+' sprint'+(added===1?'':'s')+' — rename any of them or adjust dates below');el('sprintUpTo').value='';renderSprints();});
+  });
   m.querySelectorAll('[data-sp-del]').forEach(function(b){b.addEventListener('click',function(){var n=Number(b.getAttribute('data-sp-del'));var used=CHARS.filter(function(c){return (c.sprint||1)===n;}).length;
     if(!confirm('Remove Sprint '+n+'?'+(used?' '+used+' character(s) are in it \u2014 they keep the number but it won\u2019t show as a sprint until re-added.':'')))return;
     SPRINT_DEFS=SPRINT_DEFS.filter(function(s){return s.n!==n;});saveSprints().then(function(){toast('Sprint removed');renderSprints();});});});}
