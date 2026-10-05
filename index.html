@@ -1018,6 +1018,17 @@ function isAdmin(){return CURRENT_USER===ADMIN_NAME&&AUTHED;}
 function findUser(name){for(var i=0;i<USERS.length;i++)if(USERS[i].name===name)return USERS[i];return null;}
 function userRole(name){if(name===ADMIN_NAME)return 'Admin';var u=findUser(name);return u?u.role:'Viewer';}
 function userNames(){return USERS.map(function(u){return u.name;});}
+// Names that still sit on some character/task assignment but belong to no
+// one in the current team list — almost always leftovers from a rename that
+// didn't fully reach every record (the old client-only rename, or a record
+// added/edited while offline). Surfaced in Security so an admin can merge
+// them into whoever they should actually be, instead of them lingering
+// forever in Analytics/Scores under a name nobody can pick anymore.
+function strayNames(){var known={};userNames().forEach(function(n){known[n]=1;});
+  var counts={};function bump(n){if(!n||known[n])return;counts[n]=(counts[n]||0)+1;}
+  CHARS.forEach(function(c){bump(c.modeledBy);bump(c.texturedBy);});
+  TASKS.forEach(function(t){bump(t.modeledBy);bump(t.texturedBy);});
+  return Object.keys(counts).sort().map(function(n){return{name:n,count:counts[n]};});}
 function myRole(){if(isAdmin())return 'Admin';var r=userRole(CURRENT_USER);return r==='Admin'?'Reviewer':r;}
 function canManage(){return isAdmin();}
 function canReview(){var r=myRole();return r==='Admin'||r==='Reviewer';}
@@ -1620,15 +1631,24 @@ function renderSecurity(){var m=el('securityMount');if(!m)return;
     var rm=isW?'':'<button class="btn danger xs" data-rmuser="'+esc(u.name)+'" title="Remove">\u2715</button>';
     var rn=isW?'':'<button class="btn ghost xs" data-rename="'+esc(u.name)+'" title="Rename">Rename</button>';
     return '<tr><td><span class="uw-ava sm">'+esc(initials(u.name))+'</span> '+esc(u.name)+' '+rn+'</td><td>'+roleSel+'</td><td class="sec-pwcell">'+pw+' '+pwBtn+'</td><td style="text-align:right">'+rm+'</td></tr>';}).join('');
+  var strays=strayNames();
+  var strayBlock=!strays.length?'':('<div class="divider"></div>'
+    +'<div class="hint" style="margin:0 0 8px"><b>Old names still on some records</b> \u2014 these don\u2019t match anyone in the list above, usually left over from a rename that didn\u2019t reach every record. Merge each into whoever it should actually be.</div>'
+    +strays.map(function(s){return '<div class="sec-add stray-row" style="margin-bottom:6px"><span style="min-width:150px;display:inline-block">'+esc(s.name)+' <span class="hint" style="display:inline">('+s.count+' record'+(s.count===1?'':'s')+')</span></span>'
+      +'<select><option value="">Merge into\u2026</option>'+userNames().filter(function(n){return n!==ADMIN_NAME;}).map(function(n){return '<option>'+esc(n)+'</option>';}).join('')+'</select>'
+      +'<button class="btn accent sm">Merge</button></div>';}).join(''));
   m.innerHTML='<div class="panel security"><h3>Users &amp; access</h3>'
     +'<div class="hint" style="margin:0 0 12px">Roles decide what each person can do \u2014 <b>Admin</b>: everything · <b>Editor</b>: add &amp; edit characters and tasks (name, stats, images, etc.) but can\u2019t delete them · <b>Reviewer</b>: approve/reject reviews &amp; update status · <b>Artist</b>: update status &amp; submit for review · <b>Viewer</b>: read-only. Optional per-user passwords add a sign-in gate. <i>Note: this is a local convenience gate, not server-grade security.</i></div>'
     +'<table class="sec-table"><thead><tr><th>Name</th><th>Role</th><th>Password</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'
     +'<div class="sec-add"><input id="secNewName" placeholder="New teammate name"><select id="secNewRole">'+['Artist','Editor','Reviewer','Viewer'].map(function(r){return '<option>'+r+'</option>';}).join('')+'</select><button class="btn accent sm" id="secAdd">+ Add user</button></div>'
     +'<div id="secPwFlow"></div>'
     +'<div id="secRenameFlow"></div>'
+    +strayBlock
     +'<div class="divider"></div>'
     +'<div class="hint" style="margin:0 0 8px"><b>Admin password</b> (for Wilson / admin sign-in)</div>'
     +'<div class="sec-add"><input id="secAdminPw" type="password" placeholder="New admin password (min 4)"><button class="btn ghost sm" id="secAdminSave">Update admin password</button></div></div>';
+  m.querySelectorAll('.stray-row').forEach(function(row,i){var s=strays[i];if(!s)return;var sel=row.querySelector('select'),btn=row.querySelector('button');
+    btn.addEventListener('click',function(){var val=sel.value;if(!val){toast('Pick who this should merge into');return;}renameUser(s.name,val);});});
   m.querySelectorAll('[data-role]').forEach(function(s){s.addEventListener('change',function(){var u=findUser(s.getAttribute('data-role'));if(u){u.role=s.value;saveUsers().then(function(){toast('Role updated');});}});});
   m.querySelectorAll('[data-rmuser]').forEach(function(b){b.addEventListener('click',function(){var n=b.getAttribute('data-rmuser');if(!confirm('Remove '+n+'?'))return;USERS=USERS.filter(function(x){return x.name!==n;});if(CURRENT_USER===n)userSetLS('');saveUsers().then(function(){toast('User removed');renderSecurity();renderUserWidget();});});});
   m.querySelectorAll('[data-setpw]').forEach(function(b){b.addEventListener('click',function(){pwFlow(b.getAttribute('data-setpw'));});});
@@ -1649,8 +1669,17 @@ function renameUser(oldName,newNameRaw){var box=el('secRenameFlow');var newName=
   if(!newName){toast('Enter a name');return;}
   if(newName===oldName){if(box)box.innerHTML='';return;}
   if(newName===ADMIN_NAME){toast('That name is reserved for the admin');return;}
-  if(findUser(newName)){toast('That name already exists');return;}
-  var u=findUser(oldName);if(!u)return;
+  var u=findUser(oldName);
+  if(u){
+    // A true rename of a current teammate: the new name must be free.
+    if(findUser(newName)){toast('That name already exists');return;}
+  }else{
+    // oldName isn't anyone in the list today — this can only be a cleanup
+    // merge of stray leftover data (e.g. assignments an earlier, incomplete
+    // rename never reached) into an EXISTING teammate, never a typo that
+    // would otherwise silently create a brand-new name on some records.
+    if(!findUser(newName)){toast('No current teammate named "'+newName+'" to merge into');return;}
+  }
   // The actual rewrite happens server-side (rename-user.js): besides
   // characters/tasks modeledBy & texturedBy, it also fixes up image upload
   // captions ('by', which the client can never write directly — see

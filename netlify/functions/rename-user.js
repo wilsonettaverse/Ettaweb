@@ -43,14 +43,24 @@ exports.handler = async (event) => {
   const users = (await getSettingRaw('users')) || [];
   if (!Array.isArray(users)) return json(500, { error: 'User list is corrupted' });
   const u = users.find(function (x) { return (typeof x === 'string' ? x : x.name) === oldName; });
-  if (!u) return json(404, { error: 'No such user' });
-  if (users.some(function (x) { return (typeof x === 'string' ? x : x.name) === newName; })) {
-    return json(400, { error: 'That name already exists' });
-  }
-  if (typeof u === 'string') {
-    users[users.indexOf(u)] = newName;
+  const target = users.find(function (x) { return (typeof x === 'string' ? x : x.name) === newName; });
+
+  if (u) {
+    // A true rename: oldName is a real teammate today, so the new name must
+    // be free.
+    if (target) return json(400, { error: 'That name already exists' });
+    if (typeof u === 'string') {
+      users[users.indexOf(u)] = newName;
+    } else {
+      u.name = newName;
+    }
   } else {
-    u.name = newName;
+    // No current teammate is called oldName — the only legitimate reason to
+    // call this endpoint with that name is to clean up stray leftover data
+    // (assignments an earlier, incomplete rename never reached) by merging
+    // it into an EXISTING teammate. Never silently invent a new name on
+    // some records just because the caller mistyped oldName.
+    if (!target) return json(404, { error: 'No such user' });
   }
 
   const characters = await getCharacters();
