@@ -1651,20 +1651,23 @@ function renameUser(oldName,newNameRaw){var box=el('secRenameFlow');var newName=
   if(newName===ADMIN_NAME){toast('That name is reserved for the admin');return;}
   if(findUser(newName)){toast('That name already exists');return;}
   var u=findUser(oldName);if(!u)return;
-  u.name=newName;
-  var changedChars=[],ops=[saveUsers()];
-  CHARS.forEach(function(c){var ch=false;
-    if((c.modeledBy||'')===oldName){c.modeledBy=newName;ch=true;}
-    if((c.texturedBy||'')===oldName){c.texturedBy=newName;ch=true;}
-    if(ch){pushHistory(c,'assignee renamed: "'+oldName+'" → "'+newName+'"');changedChars.push(c);ops.push(putChar(c));}});
-  TASKS.forEach(function(t){var ch=false;
-    if((t.modeledBy||'')===oldName){t.modeledBy=newName;ch=true;}
-    if((t.texturedBy||'')===oldName){t.texturedBy=newName;ch=true;}
-    if(ch){pushHistory(t,'assignee renamed: "'+oldName+'" → "'+newName+'"');ops.push(putTask(t));}});
-  if(CURRENT_USER===oldName)userSetLS(newName);
-  Promise.all(ops).then(loadCaches).then(function(){changedChars.forEach(syncUpsert);
-    toast('Renamed '+oldName+' → '+newName+(changedChars.length?' — assignments updated':''));
-    if(box)box.innerHTML='';renderSecurity();renderUserWidget();}).catch(function(err){toast('Rename failed: '+err);});}
+  // The actual rewrite happens server-side (rename-user.js): besides
+  // characters/tasks modeledBy & texturedBy, it also fixes up image upload
+  // captions ('by', which the client can never write directly — see
+  // images.js) and carries forward any per-sprint goal override in the
+  // Scores tab, neither of which this client could safely do itself.
+  api('rename-user',{method:'POST',body:{oldName:oldName,newName:newName}}).then(function(r){
+    return refreshRemote().then(function(){return getSetting('users');}).then(function(us){
+      USERS=(us&&us.length)?us:DEFAULT_USERS.slice();
+      USERS=USERS.map(function(x){return typeof x==='string'?{name:x,role:(x===ADMIN_NAME?'Admin':'Artist')}:x;});
+      return getSetting('artistGoals');
+    }).then(function(ag){ARTIST_GOALS=(ag&&typeof ag==='object')?ag:{};return loadCaches();})
+    .then(function(){if(CURRENT_USER===oldName)userSetLS(newName);
+      var changed=(r.charactersChanged||0)+(r.tasksChanged||0)+(r.imagesChanged||0);
+      toast('Renamed '+oldName+' → '+newName+(changed?' — assignments & image credits updated':''));
+      if(box)box.innerHTML='';renderSecurity();renderUserWidget();
+      CHARS.forEach(function(c){if(modeledOf(c)===newName||texturedOf(c)===newName)syncUpsert(c);});});
+  }).catch(function(err){toast('Rename failed: '+(err&&err.message?err.message:err));});}
 function computeAnalytics(){var total=CHARS.length,completed=0,reviews=0,redos=0,rejected=0,stages={approved:0,modeling:0,rigged:0,stored:0},bySprint={},byClan={},byArtist={};
   function bumpA(name,key){if(!name)return;byArtist[name]=byArtist[name]||{modeled:0,textured:0,done:0};byArtist[name][key]++;}
   CHARS.forEach(function(c){var d=isDone(c);if(d)completed++;var s=statusOf(c);STAGES.forEach(function(st){if(s[st.key])stages[st.key]++;});
