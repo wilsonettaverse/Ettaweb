@@ -444,6 +444,9 @@ body.theme-dark .mem-banner{background:#2e2a1c; border-color:#5f5327; color:#e6d
 .se-meta{font-family:var(--mono); font-size:10.5px; color:var(--bark); margin-top:2px}
 .se-assign{display:flex; gap:18px; flex-wrap:wrap; font-family:var(--mono); font-size:11px; color:var(--bark); margin-bottom:14px; padding:0 2px}
 .se-assign b{color:var(--ink)}
+.weapon-box{display:flex; align-items:center; gap:10px}
+.weapon-box img{width:48px; height:48px; object-fit:cover; border-radius:8px; border:1px solid var(--line)}
+.weapon-noimg{width:48px; height:48px; display:flex; align-items:center; justify-content:center; border-radius:8px; border:1px dashed var(--line); font-size:18px; color:var(--bark)}
 
 /* --- refined depth: softer, layered shadows --- */
 :root{--shadow:0 1px 2px rgba(22,33,27,.04), 0 22px 44px -30px rgba(22,33,27,.42)}
@@ -998,8 +1001,13 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){retur
 function uid(){return 'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 function glossKey(a){return String(a).replace(/\s*\(.*?\)\s*/g,'').trim();}
 function defStatus(){return{approved:false,modeling:false,rigged:false,stored:false};}
-function primaryOf(c){var a=IMAGES[c.id]||[];if(!a.length)return null;if(c.primaryImageId){for(var i=0;i<a.length;i++)if(a[i].id===c.primaryImageId)return a[i];}return a[0];}
-function galleryOf(c){var a=(IMAGES[c.id]||[]).slice();if(c.primaryImageId)a.sort(function(x,y){return(x.id===c.primaryImageId?-1:0)-(y.id===c.primaryImageId?-1:0);});return a;}
+// A character's personal weapon image rides in the same IMAGES store/endpoint
+// as its gallery art (one fewer moving part on the server), tagged kind:'weapon'
+// so it never shows up in the gallery, primary-card pick, or image counts.
+function galleryImages(id){return (IMAGES[id]||[]).filter(function(im){return im.kind!=='weapon';});}
+function weaponImageOf(id){var a=IMAGES[id]||[];for(var i=0;i<a.length;i++)if(a[i].kind==='weapon')return a[i];return null;}
+function primaryOf(c){var a=galleryImages(c.id);if(!a.length)return null;if(c.primaryImageId){for(var i=0;i<a.length;i++)if(a[i].id===c.primaryImageId)return a[i];}return a[0];}
+function galleryOf(c){var a=galleryImages(c.id);if(c.primaryImageId)a.sort(function(x,y){return(x.id===c.primaryImageId?-1:0)-(y.id===c.primaryImageId?-1:0);});return a;}
 function statusOf(c){return c.status||defStatus();}
 function statusDone(c){var s=statusOf(c);return STAGES.reduce(function(n,st){return n+(s[st.key]?1:0);},0);}
 function modeledOf(c){return c.modeledBy||'';}
@@ -1307,7 +1315,7 @@ function paintClan(){var list=CHARS.filter(function(c){return c.clan===clanState
 
 function statBars(stats){if(!stats)return '';var mx=[25,8,8,10],lab=['HP','SH','SP','DM'],cl=['b-hp','b-sh','b-sp','b-dm'];
   return '<div class="spread">'+stats.map(function(v,i){var p=Math.max(6,Math.min(100,Math.round(v/mx[i]*100)));return '<span class="lab">'+lab[i]+'</span><span class="bar '+cl[i]+'"><i style="width:'+p+'%"></i></span>';}).join('')+'</div>';}
-function cardHTML(c){var img=primaryOf(c),imgs=IMAGES[c.id]||[];
+function cardHTML(c){var img=primaryOf(c),imgs=galleryImages(c.id);
   var thumb=img?'<img loading="lazy" src="'+img.data+'" alt="'+esc(c.name)+'">'+(imgs.length>1?'<span class="imgcount">'+imgs.length+' imgs</span>':''):'<div class="noimg"><span class="glyph">'+esc(c.name.charAt(0))+'</span><span>no art</span></div>';
   return '<button class="ccard'+(isDone(c)?' done':'')+'" data-id="'+c.id+'"><div class="thumb"><span class="num">#'+c.num+'</span><span class="mana">'+c.mana+' \u2726</span>'+(isDone(c)?'<span class="done-badge">\u2713 Completed</span>':'')+thumb+'</div>'
     +'<div class="cbody"><h3 class="cname">'+esc(c.name)+'</h3>'
@@ -1320,6 +1328,8 @@ function openModal(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)re
   var thumbs=gal.length>1?'<div class="gal-thumbs">'+gal.map(function(im,i){return '<button data-src="'+im.data+'" data-idx="'+i+'" class="'+(i===0?'active':'')+'"><img src="'+im.data+'" alt=""></button>';}).join('')+'</div>':'';
   var abilRows=c.abilities.length?'<ul class="abil-list">'+c.abilities.map(function(a){var g=GLOSS[glossKey(a)];return '<li><b>'+esc(a)+'</b>'+(g?'<span>'+esc(g)+'</span>':'<span class="mono" style="color:var(--bark);font-size:11px">no description on file</span>')+'</li>';}).join('')+'</ul>':'<p class="mono" style="color:var(--bark);font-size:12px">No abilities — starter-layer unit.</p>';
   var statusList='<div class="status-track">'+STAGES.map(function(st){return '<div class="strack '+(s[st.key]?'on':'')+'"><span class="tick">'+(s[st.key]?'\u2713':'\u25cb')+'</span>'+esc(st.label)+'</div>';}).join('')+'</div>';
+  var wimg=weaponImageOf(c.id);
+  var weaponSection=(wimg||c.weaponName)?'<div class="field" style="margin-top:14px"><label>Weapon</label><div class="weapon-box">'+(wimg?'<img src="'+wimg.data+'" alt="'+esc(c.weaponName||'Weapon')+'">':'<span class="weapon-noimg">\u2694</span>')+'<b>'+esc(c.weaponName||'Unnamed weapon')+'</b></div></div>':'';
   var back=h('<div class="modal-back"></div>');
   back.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="modal-top"><div class="modal-gallery">'+galMain+thumbs+'</div>'
     +'<div class="modal-info"><div class="el">'+esc(m.name)+' · '+esc(m.element)+' · Unit #'+c.num+' · '+esc(sprintName(c.sprint||1))+'</div><h2>'+esc(c.name)+(isDone(c)?' <span class="done-chip">\u2713 Completed</span>':'')+'</h2>'
@@ -1328,7 +1338,7 @@ function openModal(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)re
     +'<div class="kv"><span class="k">Review <b>'+esc(reviewOf(c).status||'\u2014')+'</b></span><span class="k">Reviews received <b>'+reviewOf(c).count+'</b></span><span class="k">Redos <b>'+reviewOf(c).redos+'</b></span></div>'
     +'<table class="stat-table"><tr><th>Level</th><th>HP</th><th>Shield</th><th>Speed</th><th>Damage</th></tr>'+statRow('L1',c.l1)+statRow('L6',c.l6)+statRow('L12',c.l12)+'</table>'
     +'<div class="mono" style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--bark);margin:14px 0 6px">Production status</div>'+statusList
-    +abilRows+'</div></div>'
+    +abilRows+weaponSection+'</div></div>'
     +'<div class="modal-actions"><button class="btn accent" id="mEdit">Edit in dashboard</button><button class="btn ghost" id="mClose">Close</button></div></div>';
   document.body.appendChild(back);document.body.style.overflow='hidden';
   function close(){back.remove();document.body.style.overflow='';}
@@ -1511,7 +1521,7 @@ function dchips(sel,key){APP.querySelectorAll(sel).forEach(function(b){b.addEven
 function paintDashList(){var admin=canEditChars();var canDel=isAdmin();var list=CHARS.filter(function(c){
   if(dash.clan&&c.clan!==dash.clan)return false;
   if(dash.sprint&&String(c.sprint)!==String(dash.sprint))return false;
-  if(dash.onlyArt&&!(IMAGES[c.id]||[]).length)return false;
+  if(dash.onlyArt&&!galleryImages(c.id).length)return false;
   if(dash.artist&&modeledOf(c)!==dash.artist&&texturedOf(c)!==dash.artist)return false;
   if(dash.search){var s=dash.search;if(c.name.toLowerCase().indexOf(s)<0&&c.abilities.join(' ').toLowerCase().indexOf(s)<0)return false;}return true;});
   var mount=el('dashList');if(!list.length){mount.innerHTML='<div class="empty-state"><div class="glyph">\u2205</div><p>No units match. Adjust the search or filters above.</p></div>';return;}
@@ -1526,13 +1536,13 @@ function paintDashList(){var admin=canEditChars();var canDel=isAdmin();var list=
     return b;}
   var body;
   if(dash.view==='grid'){
-    body='<div class="dcards">'+shown.map(function(c){var img=primaryOf(c),n=(IMAGES[c.id]||[]).length,m=CLAN_META[c.clan];
+    body='<div class="dcards">'+shown.map(function(c){var img=primaryOf(c),n=galleryImages(c.id).length,m=CLAN_META[c.clan];
       return '<div class="dcard'+(isDone(c)?' done':'')+(selected[c.id]?' sel':'')+'">'
         +'<div class="dcard-thumb">'+selBox(c)+(img?'<img loading="lazy" src="'+img.data+'">':'<span>'+esc(c.name.charAt(0))+'</span>')+(isDone(c)?'<span class="done-badge">\u2713</span>':'')+(n>1?'<span class="imgcount">'+n+'</span>':'')+'</div>'
         +'<div class="dcard-body"><b>'+esc(c.name)+'</b><div class="rmeta"><span class="clan-dot" style="background:'+m.accent+'"></span>'+esc(m.name)+' · #'+c.num+' · '+esc(c.arch)+'</div>'+statusPips(c)+revTag(c)+'</div>'
         +'<div class="dcard-act">'+sprintSel(c)+acts(c)+'</div></div>';}).join('')+'</div>';
   }else{
-    body=shown.map(function(c){var img=primaryOf(c),n=(IMAGES[c.id]||[]).length,m=CLAN_META[c.clan];
+    body=shown.map(function(c){var img=primaryOf(c),n=galleryImages(c.id).length,m=CLAN_META[c.clan];
       var assign=(modeledOf(c)||texturedOf(c))?' · <span class="assign">M:'+esc(modeledOf(c)||'\u2013')+' · T:'+esc(texturedOf(c)||'\u2013')+'</span>':'';
       return '<div class="row'+(isDone(c)?' done':'')+(selected[c.id]?' sel':'')+'"><div class="rthumb">'+selBox(c)+(img?'<img src="'+img.data+'">':esc(c.name.charAt(0)))+'</div>'
         +'<div class="rmain"><b>'+esc(c.name)+(isDone(c)?' <span class="done-chip sm">\u2713</span>':'')+revTag(c)+'</b><div class="rmeta"><span class="clan-dot" style="background:'+m.accent+'"></span>'+esc(m.name)+' · #'+c.num+' · S'+(c.sprint||1)+' · '+esc(c.arch)+' · '+esc(c.type)+(n?' · '+n+' img':'')+assign+'</div></div>'
@@ -2149,11 +2159,12 @@ function showGuide(){var back=h('<div class="modal-back"></div>');
 
 /* ---------- editor ---------- */
 var edit=null;
-function blankChar(){return{id:null,clan:'aranyani',num:'',name:'',mana:0,arch:'Support',type:'Magic',tier:'Basic',sprint:firstSprint(),gender:'',height:'',l1:'',l6:'',l12:'',abilities:[],images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',completed:false,review:{status:'',count:0,redos:0},history:[]};}
+function blankChar(){return{id:null,clan:'aranyani',num:'',name:'',mana:0,arch:'Support',type:'Magic',tier:'Basic',sprint:firstSprint(),gender:'',height:'',l1:'',l6:'',l12:'',abilities:[],images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',weaponName:'',weaponImage:null,completed:false,review:{status:'',count:0,redos:0},history:[]};}
+function weaponEditOf(id){var w=weaponImageOf(id);return w?{id:w.id,name:w.name,data:w.data,by:w.by||null,ts:w.ts,existing:true}:null;}
 function startEdit(id){if(!id&&!canEditChars())return;if(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
     edit={id:c.id,clan:c.clan,num:c.num,name:c.name,mana:c.mana,arch:c.arch,type:c.type,tier:c.tier,sprint:c.sprint||1,gender:c.gender||'',height:c.height||'',l1:c.l1,l6:c.l6,l12:c.l12,
-      abilities:c.abilities.slice(),images:(IMAGES[c.id]||[]).map(function(im){return{id:im.id,name:im.name,data:im.data,by:im.by||null,ts:im.ts,existing:true};}),
-      primaryId:c.primaryImageId,status:Object.assign(defStatus(),c.status||{}),modeledBy:modeledOf(c),texturedBy:texturedOf(c),completed:isDone(c),history:(c.history||[]).slice()};
+      abilities:c.abilities.slice(),images:galleryImages(c.id).map(function(im){return{id:im.id,name:im.name,data:im.data,by:im.by||null,ts:im.ts,existing:true};}),
+      primaryId:c.primaryImageId,status:Object.assign(defStatus(),c.status||{}),modeledBy:modeledOf(c),texturedBy:texturedOf(c),weaponName:c.weaponName||'',weaponImage:weaponEditOf(c.id),completed:isDone(c),history:(c.history||[]).slice()};
   }else edit=blankChar();
   renderEditor(edit);el('editorMount').scrollIntoView({behavior:'smooth',block:'nearest'});}
 function userOpts(val){return '<option value="">\u2014 unassigned \u2014</option>'+USERS.map(function(u){return '<option'+(val===u.name?' selected':'')+'>'+esc(u.name)+'</option>';}).join('');}
@@ -2183,13 +2194,15 @@ function renderEditor(e){var mount=el('editorMount');if(!mount)return;
     +'<label class="statbox done-toggle"><input type="checkbox" id="fDone"'+(e.completed?' checked':'')+'> <b>Mark this character as completed</b></label>'
     +(e.id?reviewBlock(e.id):'')
     +'<div class="field"><label>Images ('+e.images.length+')</label><div class="dropzone" id="dz"><div class="dz-glyph">\u21ea</div><p>Drop images or click to browse — multiple allowed</p></div><input type="file" id="fImgs" accept="image/*" multiple hidden><div class="thumbs" id="imgThumbs"></div><div class="hint">Star = primary (card image). Large images are auto-resized.</div></div>'
+    +'<div class="field"><label>Weapon name</label><input id="fWeaponName" value="'+esc(e.weaponName||'')+'" placeholder="This unit\u2019s personal weapon, e.g. Thornbrand Glaive"></div>'
+    +'<div class="field"><label>Weapon image</label><div class="dropzone" id="wDz"><div class="dz-glyph">\u21ea</div><p>Drop a weapon image or click to browse</p></div><input type="file" id="wFile" accept="image/*" hidden><div class="thumbs" id="weaponThumb"></div><div class="hint">One weapon image per character — uploading a new one replaces it.</div></div>'
     +historyBlock(e.history)
     +'<div class="editor-actions"><button class="btn accent" id="edSave">Save unit</button>'+(e.id&&isAdmin()?'<button class="btn danger" id="edDel">Delete</button>':'')+'<button class="btn ghost" id="edCancel">Cancel</button></div></div>';
   bindF('fName','name');bindF('fClan','clan');bindF('fSprint','sprint',true);bindF('fArch','arch');bindF('fType','type');bindF('fTier','tier');bindF('fNum','num',true);bindF('fMana','mana',true);bindF('fL1','l1');bindF('fL6','l6');bindF('fL12','l12');
   bindF('fGender','gender');bindF('fHeight','height');
   el('fAbil').addEventListener('input',function(){if(!edit)return;edit.abilities=this.value.split(/[,+]/).map(function(s){return s.trim();}).filter(Boolean);});
   mount.querySelectorAll('[data-st]').forEach(function(cb){cb.addEventListener('change',function(){if(!edit)return;edit.status[cb.getAttribute('data-st')]=cb.checked;});});
-  bindF('fModeled','modeledBy');bindF('fTextured','texturedBy');
+  bindF('fModeled','modeledBy');bindF('fTextured','texturedBy');bindF('fWeaponName','weaponName');
   var fd=el('fDone');if(fd)fd.addEventListener('change',function(){if(!edit)return;edit.completed=fd.checked;});
   bindReview(mount);
   paintThumbs();
@@ -2198,6 +2211,12 @@ function renderEditor(e){var mount=el('editorMount');if(!mount)return;
   dz.addEventListener('dragleave',function(){dz.classList.remove('over');});
   dz.addEventListener('drop',function(ev){ev.preventDefault();dz.classList.remove('over');addFiles(ev.dataTransfer.files);});
   fi.addEventListener('change',function(){addFiles(this.files);this.value='';});
+  paintWeaponThumb();
+  var wDz=el('wDz'),wFi=el('wFile');wDz.addEventListener('click',function(){wFi.click();});
+  wDz.addEventListener('dragover',function(ev){ev.preventDefault();wDz.classList.add('over');});
+  wDz.addEventListener('dragleave',function(){wDz.classList.remove('over');});
+  wDz.addEventListener('drop',function(ev){ev.preventDefault();wDz.classList.remove('over');addWeaponFile(ev.dataTransfer.files);});
+  wFi.addEventListener('change',function(){addWeaponFile(this.files);this.value='';});
   el('edSave').addEventListener('click',saveEdit);el('edCancel').addEventListener('click',function(){edit=null;renderEditor(null);});
   var del=el('edDel');if(del)del.addEventListener('click',deleteEdit);}
 function bindF(id,key,num){var f=el(id);if(!f)return;function set(v){if(!edit)return;edit[key]=num?(v===''?'':Number(v)):v;}
@@ -2219,12 +2238,15 @@ function renderStatusEditor(e,mount){var m=CLAN_META[e.clan];var img=null;var c=
     +'<label class="statbox done-toggle"><input type="checkbox" id="fDone"'+(e.completed?' checked':'')+dis+'> <b>Mark this character as completed</b></label>'
     +reviewBlock(e.id)
     +(editable?'<div class="field"><label>Images ('+e.images.length+')</label><div class="dropzone" id="dz"><div class="dz-glyph">\u21ea</div><p>Drop images or click to browse — multiple allowed</p></div><input type="file" id="fImgs" accept="image/*" multiple hidden><div class="thumbs" id="imgThumbs"></div><div class="hint">Star = primary (card image). Large images are auto-resized.</div></div>':'')
+    +(editable?'<div class="field"><label>Weapon name</label><input id="sWeaponName" value="'+esc(e.weaponName||'')+'" placeholder="This unit\u2019s personal weapon"></div><div class="field"><label>Weapon image</label><div class="dropzone" id="wDz"><div class="dz-glyph">\u21ea</div><p>Drop a weapon image or click to browse</p></div><input type="file" id="wFile" accept="image/*" hidden><div class="thumbs" id="weaponThumb"></div><div class="hint">One weapon image per character — uploading a new one replaces it.</div></div>'
+      :'<div class="field"><label>Weapon</label><div class="ro-field">'+esc(e.weaponName||'\u2014 unnamed \u2014')+'</div></div>')
     +historyBlock(e.history)
     +'<div class="editor-actions">'+(editable?'<button class="btn accent" id="edSaveStatus">Save status</button>':'')+'<button class="btn ghost" id="edCancel">Close</button></div></div>';
   if(editable){mount.querySelectorAll('[data-st]').forEach(function(cb){cb.addEventListener('change',function(){if(!edit)return;edit.status[cb.getAttribute('data-st')]=cb.checked;});});
     var fd=el('fDone');if(fd)fd.addEventListener('change',function(){if(!edit)return;edit.completed=fd.checked;});
     var sm=el('sModeled');if(sm)sm.addEventListener('change',function(){if(edit)edit.modeledBy=sm.value;});
     var stx=el('sTextured');if(stx)stx.addEventListener('change',function(){if(edit)edit.texturedBy=stx.value;});
+    var swn=el('sWeaponName');if(swn)swn.addEventListener('input',function(){if(edit)edit.weaponName=swn.value;});
     paintThumbs();
     var dz=el('dz'),fi=el('fImgs');
     dz.addEventListener('click',function(){fi.click();});
@@ -2232,13 +2254,33 @@ function renderStatusEditor(e,mount){var m=CLAN_META[e.clan];var img=null;var c=
     dz.addEventListener('dragleave',function(){dz.classList.remove('over');});
     dz.addEventListener('drop',function(ev){ev.preventDefault();dz.classList.remove('over');addFiles(ev.dataTransfer.files);});
     fi.addEventListener('change',function(){addFiles(this.files);this.value='';});
+    paintWeaponThumb();
+    var wDz=el('wDz'),wFi=el('wFile');
+    wDz.addEventListener('click',function(){wFi.click();});
+    wDz.addEventListener('dragover',function(ev){ev.preventDefault();wDz.classList.add('over');});
+    wDz.addEventListener('dragleave',function(){wDz.classList.remove('over');});
+    wDz.addEventListener('drop',function(ev){ev.preventDefault();wDz.classList.remove('over');addWeaponFile(ev.dataTransfer.files);});
+    wFi.addEventListener('change',function(){addWeaponFile(this.files);this.value='';});
     var ss=el('edSaveStatus');if(ss)ss.addEventListener('click',saveStatusOnly);}
   bindReview(mount);
   el('edCancel').addEventListener('click',function(){edit=null;renderEditor(null);});}
-function imageOps(id){var existing=(IMAGES[id]||[]).map(function(im){return im.id;}),keep=edit.images.map(function(im){return im.id;}),ops=[];
+function imageOps(id){var existing=galleryImages(id).map(function(im){return im.id;}),keep=edit.images.map(function(im){return im.id;}),ops=[];
   existing.forEach(function(eid){if(keep.indexOf(eid)<0)ops.push(delImg(eid));});
   edit.images.forEach(function(im,idx){if(existing.indexOf(im.id)<0)ops.push(putImg({id:im.id,charId:id,name:im.name,data:im.data,ts:Date.now()+idx}));});
   return ops;}
+// The weapon slot is a single image kept out of imageOps' gallery diff above
+// (see galleryImages) so saving the gallery never touches it, and vice versa.
+function weaponImageOps(id){var existing=weaponImageOf(id),w=edit.weaponImage,ops=[];
+  if(existing&&(!w||w.id!==existing.id))ops.push(delImg(existing.id));
+  if(w&&(!existing||existing.id!==w.id))ops.push(putImg({id:w.id,charId:id,name:w.name,data:w.data,kind:'weapon',ts:Date.now()}));
+  return ops;}
+function weaponThumbHTML(){if(!edit.weaponImage)return '<div class="hint" style="grid-column:1/-1">No weapon image yet.</div>';var w=edit.weaponImage;
+  var cap=w.by?('<div class="thumb-cap">'+esc(w.by)+(w.ts?' · '+fmtTS(w.ts):'')+'</div>'):'';
+  return '<div class="thumb-card"><div class="thumb-item primary"><img src="'+w.data+'"><button class="rm" data-wrm="1">×</button></div>'+cap+'</div>';}
+function paintWeaponThumb(){var mount=el('weaponThumb');if(!mount)return;mount.innerHTML=weaponThumbHTML();
+  var rm=mount.querySelector('[data-wrm]');if(rm)rm.addEventListener('click',function(){edit.weaponImage=null;paintWeaponThumb();});}
+function addWeaponFile(files){if(!edit)return;var arr=Array.prototype.slice.call(files).filter(function(f){return /^image\//.test(f.type);});if(!arr.length)return;
+  resizeImage(arr[0]).then(function(d){if(!edit)return;edit.weaponImage={id:uid(),name:arr[0].name,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false};paintWeaponThumb();});}
 /* ---------- change history (who updated what) ---------- */
 function pushHistory(c,note){if(!note)return;c.history=(c.history||[]).slice();c.history.unshift({ts:Date.now(),user:CURRENT_USER||'Unknown',action:note});if(c.history.length>40)c.history.length=40;}
 function historyNote(oldStatus,newStatus,oldCompleted,newCompleted,added,removed){var parts=[];
@@ -2252,20 +2294,28 @@ function assignNote(note,oldM,newM,oldT,newT){var parts=[];
   if((oldT||'')!==(newT||''))parts.push(newT?'set Textured by to '+newT:'cleared Textured by');
   if(!parts.length)return note;
   return (note?note+', ':'')+parts.join(', ');}
+function weaponNote(note,oldName,newName,imgChanged){var parts=[];
+  if((oldName||'')!==(newName||''))parts.push(newName?'set weapon to "'+newName+'"':'cleared weapon name');
+  if(imgChanged)parts.push('updated weapon image');
+  if(!parts.length)return note;
+  return (note?note+', ':'')+parts.join(', ');}
 function historyBlock(hist){hist=hist||[];if(!hist.length)return '<div class="field history-block"><label>History</label><div class="history-empty">No changes recorded yet.</div></div>';
   var items=hist.slice(0,15).map(function(h){return '<li><span class="hist-who">'+esc(h.user||'Unknown')+'</span> — '+esc(h.action)+'<br><span class="hist-when">'+fmtTS(h.ts)+'</span></li>';}).join('');
   return '<div class="field history-block"><label>History · who updated what</label><ul class="history-list">'+items+'</ul></div>';}
 function saveStatusOnly(){if(!edit||!edit.id)return;var c=CHARS.find(function(x){return x.id===edit.id;});if(!c)return;
-  var oldStatus=Object.assign(defStatus(),c.status||{}),oldCompleted=isDone(c),oldImgIds=(IMAGES[edit.id]||[]).map(function(im){return im.id;});
+  var oldStatus=Object.assign(defStatus(),c.status||{}),oldCompleted=isDone(c),oldImgIds=galleryImages(edit.id).map(function(im){return im.id;});
   var oldModeled=c.modeledBy||'',oldTextured=c.texturedBy||'';
+  var oldWeaponName=c.weaponName||'',oldWeapon=weaponImageOf(edit.id);
   c.status=Object.assign(defStatus(),edit.status);c.completed=!!edit.completed;c.updatedAt=Date.now();
-  c.modeledBy=edit.modeledBy||'';c.texturedBy=edit.texturedBy||'';
-  var ops=imageOps(edit.id);
+  c.modeledBy=edit.modeledBy||'';c.texturedBy=edit.texturedBy||'';c.weaponName=edit.weaponName||'';
+  var ops=imageOps(edit.id).concat(weaponImageOps(edit.id));
   c.primaryImageId=edit.primaryId;if(c.primaryImageId==null&&edit.images.length)c.primaryImageId=edit.images[0].id;
   var newImgIds=edit.images.map(function(im){return im.id;});
   var added=newImgIds.filter(function(iid){return oldImgIds.indexOf(iid)<0;}).length;
   var removed=oldImgIds.filter(function(iid){return newImgIds.indexOf(iid)<0;}).length;
+  var weaponImgChanged=(oldWeapon?oldWeapon.id:null)!==(edit.weaponImage?edit.weaponImage.id:null);
   var note=assignNote(historyNote(oldStatus,c.status,oldCompleted,c.completed,added,removed),oldModeled,c.modeledBy,oldTextured,c.texturedBy);
+  note=weaponNote(note,oldWeaponName,c.weaponName,weaponImgChanged);
   pushHistory(c,note);
   ops.push(putChar(c));
   Promise.all(ops).then(loadCaches).then(function(){syncUpsert(c);toast('Status updated');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
@@ -2282,26 +2332,30 @@ function parseStats(s){if(!s)return null;var p=String(s).split('/');if(p.length!
 function saveEdit(){if(!edit.name||!String(edit.name).trim()){toast('Name is required');return;}
   var oldC=edit.id?CHARS.find(function(x){return x.id===edit.id;}):null;
   var id=edit.id||(edit.clan+'-new-'+uid());
-  var rec={id:id,clan:edit.clan,num:Number(edit.num)||0,name:String(edit.name).trim(),mana:Number(edit.mana)||0,arch:edit.arch,type:edit.type,tier:edit.tier,sprint:Number(edit.sprint)||1,gender:edit.gender||'',height:edit.height||'',l1:edit.l1,l6:edit.l6,l12:edit.l12,stats:parseStats(edit.l12),abilities:edit.abilities.slice(),status:Object.assign(defStatus(),edit.status),modeledBy:edit.modeledBy||'',texturedBy:edit.texturedBy||'',completed:!!edit.completed,primaryImageId:edit.primaryId,updatedAt:Date.now(),
+  var rec={id:id,clan:edit.clan,num:Number(edit.num)||0,name:String(edit.name).trim(),mana:Number(edit.mana)||0,arch:edit.arch,type:edit.type,tier:edit.tier,sprint:Number(edit.sprint)||1,gender:edit.gender||'',height:edit.height||'',l1:edit.l1,l6:edit.l6,l12:edit.l12,stats:parseStats(edit.l12),abilities:edit.abilities.slice(),status:Object.assign(defStatus(),edit.status),modeledBy:edit.modeledBy||'',texturedBy:edit.texturedBy||'',weaponName:String(edit.weaponName||'').trim(),completed:!!edit.completed,primaryImageId:edit.primaryId,updatedAt:Date.now(),
     // Carried over rather than rebuilt from the edit form, same as history below:
     // pinnedToTasks isn't a field this editor exposes, so without this the record
     // rebuilt here would silently drop a character back out of the Tasks views
     // every time it's saved from the normal character editor.
     pinnedToTasks:!!(oldC&&oldC.pinnedToTasks),
     history:(oldC&&oldC.history)?oldC.history.slice():[]};
-  var ops=imageOps(id);
+  var ops=imageOps(id).concat(weaponImageOps(id));
   if(rec.primaryImageId==null&&edit.images.length)rec.primaryImageId=edit.images[0].id;
   var newImgIds=edit.images.map(function(im){return im.id;});
   if(!oldC){
     var parts=['created this character'];
     if(edit.images.length)parts.push('added '+edit.images.length+' image'+(edit.images.length>1?'s':''));
+    if(rec.weaponName||edit.weaponImage)parts.push('set up its weapon'+(rec.weaponName?' ("'+rec.weaponName+'")':''));
     pushHistory(rec,parts.join(', '));
   }else{
-    var oldStatus=Object.assign(defStatus(),oldC.status||{}),oldCompleted=isDone(oldC),oldImgIds=(IMAGES[oldC.id]||[]).map(function(im){return im.id;});
+    var oldStatus=Object.assign(defStatus(),oldC.status||{}),oldCompleted=isDone(oldC),oldImgIds=galleryImages(oldC.id).map(function(im){return im.id;});
+    var oldWeapon=weaponImageOf(oldC.id);
     var added=newImgIds.filter(function(iid){return oldImgIds.indexOf(iid)<0;}).length;
     var removed=oldImgIds.filter(function(iid){return newImgIds.indexOf(iid)<0;}).length;
+    var weaponImgChanged=(oldWeapon?oldWeapon.id:null)!==(edit.weaponImage?edit.weaponImage.id:null);
     var note=historyNote(oldStatus,rec.status,oldCompleted,rec.completed,added,removed);
     if(oldC.name!==rec.name)note=(note?note+', ':'')+'renamed to "'+rec.name+'"';
+    note=weaponNote(note,oldC.weaponName||'',rec.weaponName,weaponImgChanged);
     pushHistory(rec,note);
   }
   ops.push(putChar(rec));

@@ -19,17 +19,21 @@ exports.handler = async (event) => {
     const id = body.id || uid();
     const ts = body.ts || Date.now();
     const name = body.name || '';
-    await imageStore().set(id, parsed.bytes, { metadata: { contentType: parsed.contentType, charId: body.charId, name: name } });
+    // 'kind' is an optional free-form tag (e.g. 'weapon') letting the client keep an
+    // image out of a character's main gallery while still storing it through the
+    // same endpoint/store; it's just carried through, never interpreted here.
+    const kind = body.kind || '';
+    await imageStore().set(id, parsed.bytes, { metadata: { contentType: parsed.contentType, charId: body.charId, name: name, kind: kind } });
     const metaArr = await getImagesMeta();
     const i = metaArr.findIndex(function (x) { return x.id === id; });
     // 'by' is the authenticated session's own name, never trusted from the request body,
     // so the upload-history attribution can't be spoofed by the client.
     const by = session.name;
-    const entry = { id: id, charId: body.charId, name: name, ts: ts, by: by };
+    const entry = { id: id, charId: body.charId, name: name, ts: ts, by: by, kind: kind };
     if (i >= 0) metaArr[i] = entry;
     else metaArr.push(entry);
     await setImagesMeta(metaArr);
-    return json(200, { id: id, charId: body.charId, name: name, ts: ts, by: by, data: '/api/image?id=' + encodeURIComponent(id) });
+    return json(200, { id: id, charId: body.charId, name: name, ts: ts, by: by, kind: kind, data: '/api/image?id=' + encodeURIComponent(id) });
   }
 
   if (event.httpMethod === 'DELETE') {

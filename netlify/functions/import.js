@@ -26,8 +26,8 @@ exports.handler = async (event) => {
   for (const im of images) {
     const parsed = parseDataUrl(im.data);
     if (!parsed || !im.id) continue;
-    await imageStore().set(im.id, parsed.bytes, { metadata: { contentType: parsed.contentType, charId: im.charId, name: im.name || '' } });
-    metaArr.push({ id: im.id, charId: im.charId, name: im.name || '', ts: im.ts || Date.now(), by: im.by || null });
+    await imageStore().set(im.id, parsed.bytes, { metadata: { contentType: parsed.contentType, charId: im.charId, name: im.name || '', kind: im.kind || '' } });
+    metaArr.push({ id: im.id, charId: im.charId, name: im.name || '', ts: im.ts || Date.now(), by: im.by || null, kind: im.kind || '' });
   }
 
   await setCharacters(characters);

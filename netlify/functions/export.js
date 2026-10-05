@@ -18,7 +18,7 @@ exports.handler = async (event) => {
       if (!result) continue;
       const contentType = (result.metadata && result.metadata.contentType) || 'image/jpeg';
       const b64 = Buffer.from(result.data).toString('base64');
-      images.push({ id: m.id, charId: m.charId, name: m.name, ts: m.ts, by: m.by || null, data: 'data:' + contentType + ';base64,' + b64 });
+      images.push({ id: m.id, charId: m.charId, name: m.name, ts: m.ts, by: m.by || null, kind: m.kind || '', data: 'data:' + contentType + ';base64,' + b64 });
     } catch (e) {
       // skip unreadable image, keep exporting the rest
     }
