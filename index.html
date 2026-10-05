@@ -1608,12 +1608,14 @@ function renderSecurity(){var m=el('securityMount');if(!m)return;
     var pw=isW?'<span class="sec-pw on">admin password</span>':(u.hash?'<span class="sec-pw on">password set</span>':'<span class="sec-pw off">no password</span>');
     var pwBtn=isW?'':'<button class="btn ghost xs" data-setpw="'+esc(u.name)+'">'+(u.hash?'Reset':'Set')+'</button>'+(u.hash?'<button class="btn ghost xs" data-clrpw="'+esc(u.name)+'">Clear</button>':'');
     var rm=isW?'':'<button class="btn danger xs" data-rmuser="'+esc(u.name)+'" title="Remove">\u2715</button>';
-    return '<tr><td><span class="uw-ava sm">'+esc(initials(u.name))+'</span> '+esc(u.name)+'</td><td>'+roleSel+'</td><td class="sec-pwcell">'+pw+' '+pwBtn+'</td><td style="text-align:right">'+rm+'</td></tr>';}).join('');
+    var rn=isW?'':'<button class="btn ghost xs" data-rename="'+esc(u.name)+'" title="Rename">Rename</button>';
+    return '<tr><td><span class="uw-ava sm">'+esc(initials(u.name))+'</span> '+esc(u.name)+' '+rn+'</td><td>'+roleSel+'</td><td class="sec-pwcell">'+pw+' '+pwBtn+'</td><td style="text-align:right">'+rm+'</td></tr>';}).join('');
   m.innerHTML='<div class="panel security"><h3>Users &amp; access</h3>'
     +'<div class="hint" style="margin:0 0 12px">Roles decide what each person can do \u2014 <b>Admin</b>: everything · <b>Editor</b>: add &amp; edit characters and tasks (name, stats, images, etc.) but can\u2019t delete them · <b>Reviewer</b>: approve/reject reviews &amp; update status · <b>Artist</b>: update status &amp; submit for review · <b>Viewer</b>: read-only. Optional per-user passwords add a sign-in gate. <i>Note: this is a local convenience gate, not server-grade security.</i></div>'
     +'<table class="sec-table"><thead><tr><th>Name</th><th>Role</th><th>Password</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'
     +'<div class="sec-add"><input id="secNewName" placeholder="New teammate name"><select id="secNewRole">'+['Artist','Editor','Reviewer','Viewer'].map(function(r){return '<option>'+r+'</option>';}).join('')+'</select><button class="btn accent sm" id="secAdd">+ Add user</button></div>'
     +'<div id="secPwFlow"></div>'
+    +'<div id="secRenameFlow"></div>'
     +'<div class="divider"></div>'
     +'<div class="hint" style="margin:0 0 8px"><b>Admin password</b> (for Wilson / admin sign-in)</div>'
     +'<div class="sec-add"><input id="secAdminPw" type="password" placeholder="New admin password (min 4)"><button class="btn ghost sm" id="secAdminSave">Update admin password</button></div></div>';
@@ -1621,12 +1623,38 @@ function renderSecurity(){var m=el('securityMount');if(!m)return;
   m.querySelectorAll('[data-rmuser]').forEach(function(b){b.addEventListener('click',function(){var n=b.getAttribute('data-rmuser');if(!confirm('Remove '+n+'?'))return;USERS=USERS.filter(function(x){return x.name!==n;});if(CURRENT_USER===n)userSetLS('');saveUsers().then(function(){toast('User removed');renderSecurity();renderUserWidget();});});});
   m.querySelectorAll('[data-setpw]').forEach(function(b){b.addEventListener('click',function(){pwFlow(b.getAttribute('data-setpw'));});});
   m.querySelectorAll('[data-clrpw]').forEach(function(b){b.addEventListener('click',function(){var u=findUser(b.getAttribute('data-clrpw'));if(u){delete u.hash;delete u.salt;saveUsers().then(function(){toast('Password cleared');renderSecurity();renderUserWidget();});}});});
+  m.querySelectorAll('[data-rename]').forEach(function(b){b.addEventListener('click',function(){renameFlow(b.getAttribute('data-rename'));});});
   el('secAdd').addEventListener('click',function(){var v=el('secNewName').value.trim();if(!v)return;if(findUser(v)){toast('That name already exists');return;}USERS.push({name:v,role:el('secNewRole').value});saveUsers().then(function(){toast('User added');renderSecurity();renderUserWidget();});});
   el('secAdminSave').addEventListener('click',function(){var p=el('secAdminPw').value;if(p.length<4){toast('Use at least 4 characters');return;}
     api('auth/set-password',{method:'POST',body:{newPassword:p}}).then(function(r){HAS_ADMIN_PW=true;if(r&&r.token)adminTokenSet(r.token);toast('Admin password updated');el('secAdminPw').value='';}).catch(function(){toast('Could not update password');});});}
 function pwFlow(name){var box=el('secPwFlow');if(!box)return;box.innerHTML='<div class="sec-add" style="margin-top:10px"><input id="pfPw" type="password" placeholder="Password for '+esc(name)+' (min 4)"><button class="btn accent sm" id="pfGo">Save</button><button class="btn ghost sm" id="pfX">Cancel</button></div>';var f=el('pfPw');if(f)f.focus();
   el('pfGo').addEventListener('click',function(){var p=el('pfPw').value;if(p.length<4){toast('Use at least 4 characters');return;}var u=findUser(name);if(!u)return;var salt=randSalt();hashPw(p,salt).then(function(hh){u.salt=salt;u.hash=hh;return saveUsers();}).then(function(){toast('Password set for '+name);renderSecurity();renderUserWidget();});});
   el('pfX').addEventListener('click',function(){box.innerHTML='';});}
+function renameFlow(name){var box=el('secRenameFlow');if(!box)return;
+  box.innerHTML='<div class="sec-add" style="margin-top:10px"><input id="rnName" value="'+esc(name)+'" placeholder="New name"><button class="btn accent sm" id="rnGo">Save</button><button class="btn ghost sm" id="rnX">Cancel</button></div><div class="hint" style="margin-top:6px">Updates this person’s Modeled-by / Textured-by assignments on every character and task. If they’re signed in elsewhere under the old name, they’ll need to pick their new name next time.</div>';
+  var f=el('rnName');if(f){f.focus();f.select();}
+  el('rnGo').addEventListener('click',function(){renameUser(name,el('rnName').value);});
+  el('rnX').addEventListener('click',function(){box.innerHTML='';});}
+function renameUser(oldName,newNameRaw){var box=el('secRenameFlow');var newName=String(newNameRaw||'').trim();
+  if(!newName){toast('Enter a name');return;}
+  if(newName===oldName){if(box)box.innerHTML='';return;}
+  if(newName===ADMIN_NAME){toast('That name is reserved for the admin');return;}
+  if(findUser(newName)){toast('That name already exists');return;}
+  var u=findUser(oldName);if(!u)return;
+  u.name=newName;
+  var changedChars=[],ops=[saveUsers()];
+  CHARS.forEach(function(c){var ch=false;
+    if((c.modeledBy||'')===oldName){c.modeledBy=newName;ch=true;}
+    if((c.texturedBy||'')===oldName){c.texturedBy=newName;ch=true;}
+    if(ch){pushHistory(c,'assignee renamed: "'+oldName+'" → "'+newName+'"');changedChars.push(c);ops.push(putChar(c));}});
+  TASKS.forEach(function(t){var ch=false;
+    if((t.modeledBy||'')===oldName){t.modeledBy=newName;ch=true;}
+    if((t.texturedBy||'')===oldName){t.texturedBy=newName;ch=true;}
+    if(ch){pushHistory(t,'assignee renamed: "'+oldName+'" → "'+newName+'"');ops.push(putTask(t));}});
+  if(CURRENT_USER===oldName)userSetLS(newName);
+  Promise.all(ops).then(loadCaches).then(function(){changedChars.forEach(syncUpsert);
+    toast('Renamed '+oldName+' → '+newName+(changedChars.length?' — assignments updated':''));
+    if(box)box.innerHTML='';renderSecurity();renderUserWidget();}).catch(function(err){toast('Rename failed: '+err);});}
 function computeAnalytics(){var total=CHARS.length,completed=0,reviews=0,redos=0,rejected=0,stages={approved:0,modeling:0,rigged:0,stored:0},bySprint={},byClan={},byArtist={};
   function bumpA(name,key){if(!name)return;byArtist[name]=byArtist[name]||{modeled:0,textured:0,done:0};byArtist[name][key]++;}
   CHARS.forEach(function(c){var d=isDone(c);if(d)completed++;var s=statusOf(c);STAGES.forEach(function(st){if(s[st.key])stages[st.key]++;});
@@ -1640,7 +1668,7 @@ function anRow(label,done,total,color,extra){var p=total?Math.round(done/total*1
 function renderAnalytics(mount){var a=computeAnalytics();var pct=a.total?Math.round(a.completed/a.total*100):0;
   var spset={};sprintNums().forEach(function(n){spset[n]=1;});Object.keys(a.bySprint).forEach(function(n){spset[n]=1;});
   var spList=Object.keys(spset).map(Number).sort(function(x,y){return x-y;});
-  mount.innerHTML='<div class="panel analytics"><h3>Analytics</h3>'
+  mount.innerHTML='<div class="panel analytics"><div class="panel-row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">Analytics</h3><button class="btn ghost sm" id="anExport">⤓ Export as HTML</button></div>'
     +'<div class="an-tiles"><div class="an-tile"><b>'+a.completed+'/'+a.total+'</b><span>Completed</span></div>'
       +'<div class="an-tile"><b>'+a.reviews+'</b><span>Reviews received</span></div>'
       +'<div class="an-tile"><b>'+a.redos+'</b><span>Redos requested</span></div>'
@@ -1655,7 +1683,44 @@ function renderAnalytics(mount){var a=computeAnalytics();var pct=a.total?Math.ro
       +'<div class="an-col"><h4>Completion by clan</h4>'+CLAN_ORDER.map(function(id){var d=a.byClan[id]||{total:0,done:0};return anRow(CLAN_META[id].name,d.done,d.total,CLAN_META[id].accent);}).join('')+'</div>'
     +'</div>'
     +artistSection(a)
-    +'</div>';}
+    +'</div>';
+  var be=el('anExport');if(be)be.addEventListener('click',function(){exportAnalyticsHtml(a,pct,spList);});}
+function pad2(n){return n<10?'0'+n:''+n;}
+function exportAnalyticsHtml(a,pct,spList){
+  var now=new Date();var stamp=now.getFullYear()+'-'+pad2(now.getMonth()+1)+'-'+pad2(now.getDate());
+  var stageRows=STAGES.map(function(st){var n=a.stages[st.key];var p=a.total?Math.round(n/a.total*100):0;
+    return '<tr><td>'+esc(st.label)+'</td><td>'+n+' / '+a.total+'</td><td>'+p+'%</td></tr>';}).join('');
+  var sprintRows=spList.map(function(n){var d=a.bySprint[n]||{total:0,done:0,reviews:0,redos:0};var p=d.total?Math.round(d.done/d.total*100):0;
+    return '<tr><td>'+esc(sprintName(n))+'</td><td>'+d.done+' / '+d.total+'</td><td>'+p+'%</td><td>'+d.reviews+'</td><td>'+d.redos+'</td></tr>';}).join('');
+  var clanRows=CLAN_ORDER.map(function(id){var d=a.byClan[id]||{total:0,done:0};var p=d.total?Math.round(d.done/d.total*100):0;
+    return '<tr><td>'+esc(CLAN_META[id].name)+'</td><td>'+d.done+' / '+d.total+'</td><td>'+p+'%</td></tr>';}).join('');
+  var artists={};userNames().forEach(function(n){artists[n]={modeled:0,textured:0,done:0};});
+  Object.keys(a.byArtist).forEach(function(n){artists[n]=a.byArtist[n];});
+  var artistNames=Object.keys(artists).sort(function(x,y){return (artists[y].modeled+artists[y].textured)-(artists[x].modeled+artists[x].textured);});
+  var artistRows=artistNames.map(function(n){var d=artists[n];return '<tr><td>'+esc(n)+'</td><td>'+d.modeled+'</td><td>'+d.textured+'</td><td>'+(d.done||0)+'</td></tr>';}).join('');
+  var html='<!doctype html><html><head><meta charset="utf-8"><title>Character Codex — Analytics report ('+stamp+')</title>'
+    +'<style>body{font-family:Segoe UI,Arial,sans-serif;background:#f6f5f2;color:#2a2620;margin:0;padding:32px}'
+    +'h1{margin:0 0 4px}.sub{color:#80786a;margin:0 0 28px}'
+    +'.tiles{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:28px}'
+    +'.tile{background:#fff;border:1px solid #e5e1d8;border-radius:10px;padding:16px 22px;min-width:140px}'
+    +'.tile b{display:block;font-size:26px}.tile span{color:#80786a;font-size:13px}'
+    +'h2{font-size:16px;border-bottom:2px solid #e5e1d8;padding-bottom:6px;margin-top:36px}'
+    +'table{border-collapse:collapse;width:100%;margin-top:10px}'
+    +'th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #ece8df;font-size:14px}'
+    +'th{color:#80786a;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em}'
+    +'.foot{margin-top:40px;color:#9a9284;font-size:12px}</style></head><body>'
+    +'<h1>Character Codex — Analytics report</h1><p class="sub">Exported '+esc(now.toLocaleString())+'</p>'
+    +'<div class="tiles"><div class="tile"><b>'+pct+'%</b><span>Production complete</span></div>'
+    +'<div class="tile"><b>'+a.completed+' / '+a.total+'</b><span>Units completed</span></div>'
+    +'<div class="tile"><b>'+a.reviews+'</b><span>Reviews received</span></div>'
+    +'<div class="tile"><b>'+a.redos+'</b><span>Redos requested</span></div>'
+    +'<div class="tile"><b>'+a.rejected+'</b><span>Currently rejected</span></div></div>'
+    +'<h2>Production stages</h2><table><tr><th>Stage</th><th>Done</th><th>%</th></tr>'+stageRows+'</table>'
+    +'<h2>Completion by sprint</h2><table><tr><th>Sprint</th><th>Done</th><th>%</th><th>Reviews</th><th>Redos</th></tr>'+sprintRows+'</table>'
+    +'<h2>Completion by clan</h2><table><tr><th>Clan</th><th>Done</th><th>%</th></tr>'+clanRows+'</table>'
+    +'<h2>Models by artist</h2><table><tr><th>Artist</th><th>Modeled</th><th>Textured</th><th>Completed</th></tr>'+(artistRows||'<tr><td colspan="4">No modelling / texturing assigned yet.</td></tr>')+'</table>'
+    +'<p class="foot">Generated from the Character Codex admin dashboard.</p></body></html>';
+  var blob=new Blob([html],{type:'text/html'});var link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='analytics_report_'+stamp+'.html';link.click();URL.revokeObjectURL(link.href);toast('Analytics exported');}
 function artistSection(a){var artists={};userNames().forEach(function(n){artists[n]={modeled:0,textured:0,done:0};});
   Object.keys(a.byArtist).forEach(function(n){artists[n]=a.byArtist[n];});
   var names=Object.keys(artists).sort(function(x,y){return (artists[y].modeled+artists[y].textured)-(artists[x].modeled+artists[x].textured);});
@@ -1827,7 +1892,8 @@ function renderTaskStatusEditor(e,mount){var img=null;var t=TASKS.find(function(
   var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-tst="'+st.key+'"'+(e.status[st.key]?' checked':'')+dis+'> '+esc(st.label)+'</label>';}).join('');
   mount.innerHTML='<div class="editor"><h3>'+(editable?'Update status':'View')+'</h3><div class="esub">'+(canReview()?'Review and update production status':editable?'You can update production status and add images':'Read-only ('+esc(myRole())+')')+'</div>'
     +'<div class="se-head"><div class="se-thumb">'+(img?'<img src="'+img.data+'">':esc(e.name.charAt(0)))+'</div><div><div class="se-name">'+esc(e.name)+(e.completed?' <span class="done-chip sm">✓</span>':'')+'</div><div class="se-meta">'+(e.category?esc(e.category):'Uncategorised')+' · '+esc(sprintName(e.sprint||1))+'</div></div></div>'
-    +'<div class="se-assign"><span>Modeled by <b>'+esc(e.modeledBy||'—')+'</b></span><span>Textured by <b>'+esc(e.texturedBy||'—')+'</b></span></div>'
+    +(editable?'<div class="grid2"><div class="field"><label>Modeled by</label><select id="stModeled">'+userOpts(e.modeledBy)+'</select></div><div class="field"><label>Textured by</label><select id="stTextured">'+userOpts(e.texturedBy)+'</select></div></div>'
+      :'<div class="se-assign"><span>Modeled by <b>'+esc(e.modeledBy||'—')+'</b></span><span>Textured by <b>'+esc(e.texturedBy||'—')+'</b></span></div>')
     +'<div class="field"><label>Production status</label><div class="statboxes">'+statusBoxes+'</div></div>'
     +'<label class="statbox done-toggle"><input type="checkbox" id="tfDone"'+(e.completed?' checked':'')+dis+'> <b>Mark this task as completed</b></label>'
     +taskReviewBlock(e.id)
@@ -1836,6 +1902,8 @@ function renderTaskStatusEditor(e,mount){var img=null;var t=TASKS.find(function(
     +'<div class="editor-actions">'+(editable?'<button class="btn accent" id="etSaveStatus">Save status</button>':'')+'<button class="btn ghost" id="etCancel">Close</button></div></div>';
   if(editable){mount.querySelectorAll('[data-tst]').forEach(function(cb){cb.addEventListener('change',function(){if(!taskEdit)return;taskEdit.status[cb.getAttribute('data-tst')]=cb.checked;});});
     var fd=el('tfDone');if(fd)fd.addEventListener('change',function(){if(!taskEdit)return;taskEdit.completed=fd.checked;});
+    var stm=el('stModeled');if(stm)stm.addEventListener('change',function(){if(taskEdit)taskEdit.modeledBy=stm.value;});
+    var sttx=el('stTextured');if(sttx)sttx.addEventListener('change',function(){if(taskEdit)taskEdit.texturedBy=sttx.value;});
     paintTaskThumbs();
     var dz=el('tdz'),fi=el('tfImgs');
     dz.addEventListener('click',function(){fi.click();});
@@ -1882,13 +1950,16 @@ function saveTaskEdit(){if(!taskEdit.name||!String(taskEdit.name).trim()){toast(
   Promise.all(ops).then(loadCaches).then(function(){toast(taskEdit.id?'Task updated':'Task created');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Save failed: '+err);});}
 function saveTaskStatusOnly(){if(!taskEdit||!taskEdit.id)return;var t=TASKS.find(function(x){return x.id===taskEdit.id;});if(!t)return;
   var oldStatus=Object.assign(defStatus(),t.status||{}),oldCompleted=isDone(t),oldImgIds=(IMAGES[taskEdit.id]||[]).map(function(im){return im.id;});
+  var oldModeled=t.modeledBy||'',oldTextured=t.texturedBy||'';
   t.status=Object.assign(defStatus(),taskEdit.status);t.completed=!!taskEdit.completed;t.updatedAt=Date.now();
+  t.modeledBy=taskEdit.modeledBy||'';t.texturedBy=taskEdit.texturedBy||'';
   var ops=taskImageOps(taskEdit.id);
   t.primaryImageId=taskEdit.primaryId;if(t.primaryImageId==null&&taskEdit.images.length)t.primaryImageId=taskEdit.images[0].id;
   var newImgIds=taskEdit.images.map(function(im){return im.id;});
   var added=newImgIds.filter(function(iid){return oldImgIds.indexOf(iid)<0;}).length;
   var removed=oldImgIds.filter(function(iid){return newImgIds.indexOf(iid)<0;}).length;
-  pushHistory(t,historyNote(oldStatus,t.status,oldCompleted,t.completed,added,removed));
+  var note=assignNote(historyNote(oldStatus,t.status,oldCompleted,t.completed,added,removed),oldModeled,t.modeledBy,oldTextured,t.texturedBy);
+  pushHistory(t,note);
   ops.push(putTask(t));
   Promise.all(ops).then(loadCaches).then(function(){toast('Status updated');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
 function deleteTaskEdit(){if(!taskEdit.id||!isAdmin())return;if(!confirm('Delete "'+taskEdit.name+'" and its images?'))return;var id=taskEdit.id,ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
@@ -2142,7 +2213,8 @@ function renderStatusEditor(e,mount){var m=CLAN_META[e.clan];var img=null;var c=
   var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-st="'+st.key+'"'+(e.status[st.key]?' checked':'')+dis+'> '+esc(st.label)+'</label>';}).join('');
   mount.innerHTML='<div class="editor"><h3>'+(editable?'Update status':'View')+'</h3><div class="esub">'+(canReview()?'Review and update production status':editable?'You can update production status and add images':'Read-only ('+esc(myRole())+')')+'</div>'
     +'<div class="se-head"><div class="se-thumb">'+(img?'<img src="'+img.data+'">':esc(e.name.charAt(0)))+'</div><div><div class="se-name">'+esc(e.name)+(e.completed?' <span class="done-chip sm">\u2713</span>':'')+'</div><div class="se-meta"><span class="clan-dot" style="background:'+m.accent+'"></span>'+esc(m.name)+' · #'+e.num+' · '+esc(sprintName(e.sprint||1))+' · '+esc(e.arch)+' · '+esc(e.type)+'</div></div></div>'
-    +'<div class="se-assign"><span>Modeled by <b>'+esc(e.modeledBy||'\u2014')+'</b></span><span>Textured by <b>'+esc(e.texturedBy||'\u2014')+'</b></span></div>'
+    +(editable?'<div class="grid2"><div class="field"><label>Modeled by</label><select id="sModeled">'+userOpts(e.modeledBy)+'</select></div><div class="field"><label>Textured by</label><select id="sTextured">'+userOpts(e.texturedBy)+'</select></div></div>'
+      :'<div class="se-assign"><span>Modeled by <b>'+esc(e.modeledBy||'\u2014')+'</b></span><span>Textured by <b>'+esc(e.texturedBy||'\u2014')+'</b></span></div>')
     +'<div class="field"><label>Production status</label><div class="statboxes">'+statusBoxes+'</div></div>'
     +'<label class="statbox done-toggle"><input type="checkbox" id="fDone"'+(e.completed?' checked':'')+dis+'> <b>Mark this character as completed</b></label>'
     +reviewBlock(e.id)
@@ -2151,6 +2223,8 @@ function renderStatusEditor(e,mount){var m=CLAN_META[e.clan];var img=null;var c=
     +'<div class="editor-actions">'+(editable?'<button class="btn accent" id="edSaveStatus">Save status</button>':'')+'<button class="btn ghost" id="edCancel">Close</button></div></div>';
   if(editable){mount.querySelectorAll('[data-st]').forEach(function(cb){cb.addEventListener('change',function(){if(!edit)return;edit.status[cb.getAttribute('data-st')]=cb.checked;});});
     var fd=el('fDone');if(fd)fd.addEventListener('change',function(){if(!edit)return;edit.completed=fd.checked;});
+    var sm=el('sModeled');if(sm)sm.addEventListener('change',function(){if(edit)edit.modeledBy=sm.value;});
+    var stx=el('sTextured');if(stx)stx.addEventListener('change',function(){if(edit)edit.texturedBy=stx.value;});
     paintThumbs();
     var dz=el('dz'),fi=el('fImgs');
     dz.addEventListener('click',function(){fi.click();});
@@ -2173,18 +2247,26 @@ function historyNote(oldStatus,newStatus,oldCompleted,newCompleted,added,removed
   if(added)parts.push('added '+added+' image'+(added>1?'s':''));
   if(removed)parts.push('removed '+removed+' image'+(removed>1?'s':''));
   return parts.join(', ');}
+function assignNote(note,oldM,newM,oldT,newT){var parts=[];
+  if((oldM||'')!==(newM||''))parts.push(newM?'set Modeled by to '+newM:'cleared Modeled by');
+  if((oldT||'')!==(newT||''))parts.push(newT?'set Textured by to '+newT:'cleared Textured by');
+  if(!parts.length)return note;
+  return (note?note+', ':'')+parts.join(', ');}
 function historyBlock(hist){hist=hist||[];if(!hist.length)return '<div class="field history-block"><label>History</label><div class="history-empty">No changes recorded yet.</div></div>';
   var items=hist.slice(0,15).map(function(h){return '<li><span class="hist-who">'+esc(h.user||'Unknown')+'</span> — '+esc(h.action)+'<br><span class="hist-when">'+fmtTS(h.ts)+'</span></li>';}).join('');
   return '<div class="field history-block"><label>History · who updated what</label><ul class="history-list">'+items+'</ul></div>';}
 function saveStatusOnly(){if(!edit||!edit.id)return;var c=CHARS.find(function(x){return x.id===edit.id;});if(!c)return;
   var oldStatus=Object.assign(defStatus(),c.status||{}),oldCompleted=isDone(c),oldImgIds=(IMAGES[edit.id]||[]).map(function(im){return im.id;});
+  var oldModeled=c.modeledBy||'',oldTextured=c.texturedBy||'';
   c.status=Object.assign(defStatus(),edit.status);c.completed=!!edit.completed;c.updatedAt=Date.now();
+  c.modeledBy=edit.modeledBy||'';c.texturedBy=edit.texturedBy||'';
   var ops=imageOps(edit.id);
   c.primaryImageId=edit.primaryId;if(c.primaryImageId==null&&edit.images.length)c.primaryImageId=edit.images[0].id;
   var newImgIds=edit.images.map(function(im){return im.id;});
   var added=newImgIds.filter(function(iid){return oldImgIds.indexOf(iid)<0;}).length;
   var removed=oldImgIds.filter(function(iid){return newImgIds.indexOf(iid)<0;}).length;
-  pushHistory(c,historyNote(oldStatus,c.status,oldCompleted,c.completed,added,removed));
+  var note=assignNote(historyNote(oldStatus,c.status,oldCompleted,c.completed,added,removed),oldModeled,c.modeledBy,oldTextured,c.texturedBy);
+  pushHistory(c,note);
   ops.push(putChar(c));
   Promise.all(ops).then(loadCaches).then(function(){syncUpsert(c);toast('Status updated');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
 function paintThumbs(){var mount=el('imgThumbs');if(!mount)return;if(!edit.images.length){mount.innerHTML='<div class="hint" style="grid-column:1/-1">No images yet.</div>';return;}
