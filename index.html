@@ -2071,7 +2071,7 @@ function renderSettingsInner(mount){if(!mount)return;
     +'<div class="field"><label>Recovery email</label><input id="setRecEmail" type="email" placeholder="you@example.com" value="'+esc(ADMIN_EMAIL)+'"><div class="hint">If you ever lose the admin password, “Forgot password?” on the login screen emails a one-time code here.</div></div>'
     +'<div class="panel-row"><button class="btn accent sm" id="setSaveEmail">Save recovery email</button></div>'
     +'<div class="divider"></div>'
-    +'<div class="panel-row"><button class="btn ghost sm" id="setExport">Export JSON backup</button><label class="btn ghost sm" style="cursor:pointer">Import JSON<input type="file" id="setImp" accept="application/json" hidden></label><button class="btn ghost sm" id="setChangePw">Change admin password</button><button class="btn danger sm" id="setReset">Reset to defaults</button></div>'
+    +'<div class="panel-row"><button class="btn ghost sm" id="setExport">Export JSON backup</button><button class="btn ghost sm" id="setExportXlsx">Export as Excel (with images)</button><label class="btn ghost sm" style="cursor:pointer">Import JSON<input type="file" id="setImp" accept="application/json" hidden></label><button class="btn ghost sm" id="setChangePw">Change admin password</button><button class="btn danger sm" id="setReset">Reset to defaults</button></div>'
     +'<div id="pwMount"></div>'
     +'<div class="divider"></div><div id="clansMount"></div><div class="divider"></div><div id="sprintsMount"></div>'
     +'</div>';
@@ -2082,6 +2082,7 @@ function renderSettingsInner(mount){if(!mount)return;
   el('setGuide').addEventListener('click',showGuide);
   el('setSaveEmail').addEventListener('click',function(){var v=el('setRecEmail').value.trim();ADMIN_EMAIL=v;setSetting('adminEmail',ADMIN_EMAIL).then(function(){toast(ADMIN_EMAIL?'Recovery email saved':'Recovery email cleared');});});
   el('setExport').addEventListener('click',exportData);
+  el('setExportXlsx').addEventListener('click',exportExcel);
   el('setImp').addEventListener('change',importData);
   el('setChangePw').addEventListener('click',showPwPanel);
   el('setReset').addEventListener('click',resetData);
@@ -2434,6 +2435,53 @@ function deleteEdit(){if(!edit.id||!isAdmin())return;if(!confirm('Delete "'+edit
 
 /* ---------- export / import / reset ---------- */
 function exportData(){api('export').then(function(d){var blob=new Blob([JSON.stringify(d)],{type:'application/json'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='character_codex_backup.json';a.click();URL.revokeObjectURL(a.href);toast('Exported backup');}).catch(function(){toast('Export failed — sign in required');});}
+// The Google Sheet sync (above) sends each character's image along with it,
+// but a Sheet can't display that as an actual picture without extra Apps
+// Script code on the receiving end — so in practice the sheet never shows
+// images. This export sidesteps that entirely: it's a real .xlsx file,
+// built right here in the browser, with each unit's artwork embedded as an
+// actual picture in the row. The Excel-writing library is fairly large, so
+// it's only fetched the first time this button is used, not on every page
+// load.
+function loadScript(src){return new Promise(function(res,rej){
+  if(window.ExcelJS)return res();
+  var existing=document.querySelector('script[data-lib="exceljs"]');
+  if(existing){existing.addEventListener('load',function(){res();});existing.addEventListener('error',function(){rej(new Error('Could not load the Excel export library — check your connection'));});return;}
+  var s=document.createElement('script');s.src=src;s.dataset.lib='exceljs';
+  s.onload=function(){res();};s.onerror=function(){rej(new Error('Could not load the Excel export library — check your connection'));};
+  document.head.appendChild(s);});}
+function exportExcel(){toast('Preparing Excel export…');
+  loadScript('https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js')
+    .then(function(){return api('export');})
+    .then(buildExcelWorkbook)
+    .then(function(wb){return wb.xlsx.writeBuffer();})
+    .then(function(buf){var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      var now=new Date();var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+      a.download='character_codex_'+now.getFullYear()+'-'+pad2(now.getMonth()+1)+'-'+pad2(now.getDate())+'.xlsx';
+      a.click();URL.revokeObjectURL(a.href);toast('Excel export ready');})
+    .catch(function(err){toast('Excel export failed: '+(err&&err.message?err.message:err));});}
+var XLSX_HEADERS=['Image','#','Name','Clan','Sprint','Class','Type','Tier','Gender','Height','Mana','L1','L6','L12','Abilities','Approved','Modeling','Rigged','Stored','Completed','Modeled by','Textured by'];
+var XLSX_COL_WIDTHS=[14,6,22,14,10,12,10,10,9,9,7,12,12,12,26,9,9,8,8,10,14,14];
+function buildExcelWorkbook(d){var wb=new window.ExcelJS.Workbook();wb.creator='Character Codex';wb.created=new Date();
+  var imagesByChar={};(d.images||[]).forEach(function(im){(imagesByChar[im.charId]=imagesByChar[im.charId]||[]).push(im);});
+  function pickImage(c){var arr=(imagesByChar[c.id]||[]).filter(function(im){return im.kind!=='weapon';});if(!arr.length)return null;
+    if(c.primaryImageId){var hit=arr.find(function(im){return im.id===c.primaryImageId;});if(hit)return hit;}return arr[0];}
+  CLAN_ORDER.forEach(function(clanId){
+    var chars=(d.characters||[]).filter(function(c){return c.clan===clanId;}).sort(function(a,b){return (a.num||0)-(b.num||0);});
+    if(!chars.length)return;
+    var sheetName=((CLAN_META[clanId]?CLAN_META[clanId].name:clanId)||clanId).slice(0,31);
+    var ws=wb.addWorksheet(sheetName);
+    ws.columns=XLSX_HEADERS.map(function(h,i){return{header:h,width:XLSX_COL_WIDTHS[i]||12};});
+    ws.getRow(1).font={bold:true};
+    chars.forEach(function(c,idx){var rowIdx=idx+2;var s=Object.assign({approved:false,modeling:false,rigged:false,stored:false},c.status||{});
+      var row=ws.getRow(rowIdx);row.height=56;
+      row.values=[null,c.num||'',c.name||'',sheetName,c.sprint||'',c.arch||'',c.type||'',c.tier||'',c.gender||'',c.height||'',c.mana||0,c.l1||'',c.l6||'',c.l12||'',(c.abilities||[]).join(', '),s.approved?'Yes':'',s.modeling?'Yes':'',s.rigged?'Yes':'',s.stored?'Yes':'',c.completed?'Yes':'',c.modeledBy||'',c.texturedBy||''];
+      var im=pickImage(c);
+      if(im&&im.data){var m=/^data:([^;]+);base64,(.+)$/.exec(im.data);
+        if(m){var ext=m[1].indexOf('png')>=0?'png':'jpeg';var imgId=wb.addImage({base64:m[2],extension:ext});
+          ws.addImage(imgId,{tl:{col:0,row:rowIdx-1},ext:{width:56,height:56},editAs:'oneCell'});}}});});
+  if(!wb.worksheets.length){var empty=wb.addWorksheet('No characters');empty.columns=XLSX_HEADERS.map(function(h,i){return{header:h,width:XLSX_COL_WIDTHS[i]||12};});}
+  return wb;}
 function importData(ev){var f=ev.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(){try{var d=JSON.parse(r.result);if(!d.characters)throw 'bad';if(!confirm('Replace all current data with this backup ('+d.characters.length+' units'+(d.tasks?', '+d.tasks.length+' tasks':'')+')?'))return;
   api('import',{method:'POST',body:{characters:d.characters,tasks:d.tasks,images:d.images||[]}}).then(refreshRemote).then(loadCaches).then(function(){toast('Imported '+d.characters.length+' units');paintDashList();renderEditor(null);if(el('taskList'))paintTaskList();}).catch(function(){toast('Import failed');});
   }catch(e){toast('Import failed: invalid file');}};r.readAsText(f);ev.target.value='';}
