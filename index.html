@@ -271,6 +271,8 @@ img{max-width:100%; display:block}
 .history-list li{font-size:12px; line-height:1.4; border-left:2px solid var(--line-2); padding-left:9px}
 .history-list .hist-who{font-weight:600}
 .history-list .hist-when{font-family:var(--mono); font-size:10px; color:var(--bark)}
+.history-list .hist-del{border:none; background:none; color:var(--bark); cursor:pointer; font-size:13px; line-height:1; padding:0 2px; margin-left:4px}
+.history-list .hist-del:hover{color:var(--danger)}
 .history-empty{font-size:12px; color:var(--bark)}
 
 /* toast */
@@ -1843,24 +1845,31 @@ function toggleCharInTasks(id){var c=CHARS.find(function(x){return x.id===id;});
 var addCharState={search:''};
 function toggleAddCharPanel(){var m=el('addCharMount');if(!m)return;if(m.dataset.open){m.dataset.open='';m.innerHTML='';return;}m.dataset.open='1';addCharState.search='';renderAddCharPanel();}
 function renderAddCharPanel(){var m=el('addCharMount');if(!m||!m.dataset.open)return;
-  var avail=CHARS.filter(function(c){return !c.pinnedToTasks;});
-  if(addCharState.search){var s=addCharState.search;avail=avail.filter(function(c){return c.name.toLowerCase().indexOf(s)>=0;});}
-  var shown=avail.slice(0,40);
+  // Only the input + its own results list live here, rendered once; typing
+  // repaints just #addCharResults (see paintAddCharResults) instead of this
+  // whole panel, so the search box is never torn down and rebuilt mid-type
+  // — recreating it on every keystroke was dropping focus after each letter.
   m.innerHTML='<div class="panel" style="margin:10px 0"><h3 style="font-size:14px;margin:0 0 6px">Add an existing character to Tasks</h3>'
     +'<div class="hint" style="margin:0 0 8px">This pulls a character from its clan into the Tasks views so you can track it here too — it’s the same record, not a copy. Any status, image or assignment change made from here updates the character in its clan, and vice versa.</div>'
     +'<input id="addCharSearch" placeholder="Search characters by name…" value="'+esc(addCharState.search)+'" style="margin-bottom:8px;max-width:320px">'
-    +'<div class="sprint-rows" style="max-height:260px;overflow:auto">'+(shown.length?shown.map(function(c){var m2=CLAN_META[c.clan]||{};
+    +'<div id="addCharResults" class="sprint-rows" style="max-height:260px;overflow:auto"></div></div>';
+  el('addCharSearch').addEventListener('input',function(){addCharState.search=this.value.toLowerCase();paintAddCharResults();});
+  paintAddCharResults();}
+function paintAddCharResults(){var box=el('addCharResults');if(!box)return;
+  var avail=CHARS.filter(function(c){return !c.pinnedToTasks;});
+  if(addCharState.search){var s=addCharState.search;avail=avail.filter(function(c){return c.name.toLowerCase().indexOf(s)>=0;});}
+  var shown=avail.slice(0,40);
+  box.innerHTML=(shown.length?shown.map(function(c){var m2=CLAN_META[c.clan]||{};
       return '<div class="sprint-row"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:2px;background:'+(m2.accent||'#888')+'"></span><span style="flex:1">'+esc(c.name)+'</span><span class="hint" style="margin:0 8px">'+esc(m2.name||c.clan)+' · #'+c.num+'</span><button class="btn accent xs" data-addchar="'+c.id+'">+ Add</button></div>';
     }).join(''):'<div class="hint">'+(avail.length?'No match for that search.':'Every character is already in Tasks.')+'</div>')
-    +(avail.length>shown.length?'<div class="hint" style="margin-top:6px">+'+(avail.length-shown.length)+' more — narrow your search to see them.</div>':'')+'</div></div>';
-  el('addCharSearch').addEventListener('input',function(){addCharState.search=this.value.toLowerCase();renderAddCharPanel();});
-  m.querySelectorAll('[data-addchar]').forEach(function(b){b.addEventListener('click',function(){pinCharToTasks(b.getAttribute('data-addchar'));});});}
+    +(avail.length>shown.length?'<div class="hint" style="margin-top:6px">+'+(avail.length-shown.length)+' more — narrow your search to see them.</div>':'');
+  box.querySelectorAll('[data-addchar]').forEach(function(b){b.addEventListener('click',function(){pinCharToTasks(b.getAttribute('data-addchar'));});});}
 function pinCharToTasks(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;c.pinnedToTasks=true;c.updatedAt=Date.now();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast('"'+c.name+'" added to Tasks');paintTaskList();renderAddCharPanel();}).catch(function(err){toast('Update failed: '+err);});}
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast('"'+c.name+'" added to Tasks');paintTaskList();paintAddCharResults();}).catch(function(err){toast('Update failed: '+err);});}
 function unpinCharFromTasks(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
   if(!confirm('Remove "'+c.name+'" from Tasks? The character itself stays untouched in its clan.'))return;
   c.pinnedToTasks=false;c.updatedAt=Date.now();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast('Removed from Tasks');paintTaskList();renderAddCharPanel();}).catch(function(err){toast('Update failed: '+err);});}
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast('Removed from Tasks');paintTaskList();paintAddCharResults();}).catch(function(err){toast('Update failed: '+err);});}
 function quickDeleteTask(id){if(!isAdmin())return;var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
   if(!confirm('Remove "'+t.name+'" and its images? This cannot be undone.'))return;
   var ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
@@ -1896,7 +1905,7 @@ function renderTaskEditor(e){var mount=el('taskEditorMount');if(!mount)return;
     +'<label class="statbox done-toggle"><input type="checkbox" id="tfDone"'+(e.completed?' checked':'')+'> <b>Mark this task as completed</b></label>'
     +(e.id?taskReviewBlock(e.id):'')
     +'<div class="field"><label>Images ('+e.images.length+')</label><div class="dropzone" id="tdz"><div class="dz-glyph">⇪</div><p>Drop images or click to browse — multiple allowed</p></div><input type="file" id="tfImgs" accept="image/*" multiple hidden><div class="thumbs" id="timgThumbs"></div><div class="hint">Star = primary (card image). Large images are auto-resized.</div></div>'
-    +historyBlock(e.history)
+    +historyBlock(e.history,isAdmin())
     +'<div class="editor-actions"><button class="btn accent" id="etSave">Save task</button>'+(e.id&&isAdmin()?'<button class="btn danger" id="etDel">Delete</button>':'')+'<button class="btn ghost" id="etCancel">Cancel</button></div></div>';
   bindTF('tfName','name');bindTF('tfCategory','category');bindTF('tfSprint','sprint',true);
   mount.querySelectorAll('[data-tst]').forEach(function(cb){cb.addEventListener('change',function(){if(!taskEdit)return;taskEdit.status[cb.getAttribute('data-tst')]=cb.checked;});});
@@ -1910,7 +1919,8 @@ function renderTaskEditor(e){var mount=el('taskEditorMount');if(!mount)return;
   dz.addEventListener('drop',function(ev){ev.preventDefault();dz.classList.remove('over');addTaskFiles(ev.dataTransfer.files);});
   fi.addEventListener('change',function(){addTaskFiles(this.files);this.value='';});
   el('etSave').addEventListener('click',saveTaskEdit);el('etCancel').addEventListener('click',function(){taskEdit=null;renderTaskEditor(null);});
-  var del=el('etDel');if(del)del.addEventListener('click',deleteTaskEdit);}
+  var del=el('etDel');if(del)del.addEventListener('click',deleteTaskEdit);
+  if(isAdmin())bindHistory(mount,e);}
 function bindTF(id,key,num){var f=el(id);if(!f)return;function set(v){if(!taskEdit)return;taskEdit[key]=num?(v===''?'':Number(v)):v;}
   f.addEventListener('input',function(){set(this.value);});f.addEventListener('change',function(){set(this.value);});}
 function taskReviewBlock(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return '';var r=reviewOf(t);
@@ -1971,7 +1981,11 @@ function addTaskFiles(files){if(!taskEdit)return;var arr=Array.prototype.slice.c
 function saveTaskEdit(){if(!taskEdit.name||!String(taskEdit.name).trim()){toast('Name is required');return;}
   var oldT=taskEdit.id?TASKS.find(function(x){return x.id===taskEdit.id;}):null;
   var id=taskEdit.id||('task-'+uid());
-  var rec={id:id,name:String(taskEdit.name).trim(),category:String(taskEdit.category||'').trim(),sprint:Number(taskEdit.sprint)||firstSprint(),status:Object.assign(defStatus(),taskEdit.status),modeledBy:taskEdit.modeledBy||'',texturedBy:taskEdit.texturedBy||'',completed:!!taskEdit.completed,primaryImageId:taskEdit.primaryId,updatedAt:Date.now(),createdAt:(oldT&&oldT.createdAt)||taskEdit.createdAt||Date.now(),history:(oldT&&oldT.history)?oldT.history.slice():[]};
+  // history comes from taskEdit (the in-memory copy), not oldT (the server's
+  // copy), so that an admin's edits to it in this editor — e.g. deleting an
+  // entry via bindHistory — actually stick instead of being overwritten by
+  // the untouched server copy on save.
+  var rec={id:id,name:String(taskEdit.name).trim(),category:String(taskEdit.category||'').trim(),sprint:Number(taskEdit.sprint)||firstSprint(),status:Object.assign(defStatus(),taskEdit.status),modeledBy:taskEdit.modeledBy||'',texturedBy:taskEdit.texturedBy||'',completed:!!taskEdit.completed,primaryImageId:taskEdit.primaryId,updatedAt:Date.now(),createdAt:(oldT&&oldT.createdAt)||taskEdit.createdAt||Date.now(),history:taskEdit.history?taskEdit.history.slice():[]};
   var ops=taskImageOps(id);
   if(rec.primaryImageId==null&&taskEdit.images.length)rec.primaryImageId=taskEdit.images[0].id;
   var newImgIds=taskEdit.images.map(function(im){return im.id;});
@@ -2228,7 +2242,7 @@ function renderEditor(e){var mount=el('editorMount');if(!mount)return;
     +'<div class="field"><label>Images ('+e.images.length+')</label><div class="dropzone" id="dz"><div class="dz-glyph">\u21ea</div><p>Drop images or click to browse — multiple allowed</p></div><input type="file" id="fImgs" accept="image/*" multiple hidden><div class="thumbs" id="imgThumbs"></div><div class="hint">Star = primary (card image). Large images are auto-resized.</div></div>'
     +'<div class="field"><label>Weapon name</label><input id="fWeaponName" value="'+esc(e.weaponName||'')+'" placeholder="This unit\u2019s personal weapon, e.g. Thornbrand Glaive"></div>'
     +'<div class="field"><label>Weapon image</label><div class="dropzone" id="wDz"><div class="dz-glyph">\u21ea</div><p>Drop a weapon image or click to browse</p></div><input type="file" id="wFile" accept="image/*" hidden><div class="thumbs" id="weaponThumb"></div><div class="hint">One weapon image per character — uploading a new one replaces it.</div></div>'
-    +historyBlock(e.history)
+    +historyBlock(e.history,isAdmin())
     +'<div class="editor-actions"><button class="btn accent" id="edSave">Save unit</button>'+(e.id&&isAdmin()?'<button class="btn danger" id="edDel">Delete</button>':'')+'<button class="btn ghost" id="edCancel">Cancel</button></div></div>';
   bindF('fName','name');bindF('fClan','clan');bindF('fSprint','sprint',true);bindF('fArch','arch');bindF('fType','type');bindF('fTier','tier');bindF('fNum','num',true);bindF('fMana','mana',true);bindF('fL1','l1');bindF('fL6','l6');bindF('fL12','l12');
   bindF('fGender','gender');bindF('fHeight','height');
@@ -2250,7 +2264,8 @@ function renderEditor(e){var mount=el('editorMount');if(!mount)return;
   wDz.addEventListener('drop',function(ev){ev.preventDefault();wDz.classList.remove('over');addWeaponFile(ev.dataTransfer.files);});
   wFi.addEventListener('change',function(){addWeaponFile(this.files);this.value='';});
   el('edSave').addEventListener('click',saveEdit);el('edCancel').addEventListener('click',function(){edit=null;renderEditor(null);});
-  var del=el('edDel');if(del)del.addEventListener('click',deleteEdit);}
+  var del=el('edDel');if(del)del.addEventListener('click',deleteEdit);
+  if(isAdmin())bindHistory(mount,e);}
 function bindF(id,key,num){var f=el(id);if(!f)return;function set(v){if(!edit)return;edit[key]=num?(v===''?'':Number(v)):v;}
   f.addEventListener('input',function(){set(this.value);});f.addEventListener('change',function(){set(this.value);});}
 function reviewBlock(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return '';var r=reviewOf(c);
@@ -2331,9 +2346,27 @@ function weaponNote(note,oldName,newName,imgChanged){var parts=[];
   if(imgChanged)parts.push('updated weapon image');
   if(!parts.length)return note;
   return (note?note+', ':'')+parts.join(', ');}
-function historyBlock(hist){hist=hist||[];if(!hist.length)return '<div class="field history-block"><label>History</label><div class="history-empty">No changes recorded yet.</div></div>';
-  var items=hist.slice(0,15).map(function(h){return '<li><span class="hist-who">'+esc(h.user||'Unknown')+'</span> — '+esc(h.action)+'<br><span class="hist-when">'+fmtTS(h.ts)+'</span></li>';}).join('');
-  return '<div class="field history-block"><label>History · who updated what</label><ul class="history-list">'+items+'</ul></div>';}
+function historyBlock(hist,editable){hist=hist||[];
+  if(!hist.length)return '<div class="field history-block"><label>History</label><div class="history-empty">No changes recorded yet.</div></div>';
+  // Deleting is index-based into the same array these list items were built
+  // from (the first 15, oldest-last) — never re-slice differently here
+  // without also fixing up bindHistory's splice index below.
+  var items=hist.slice(0,15).map(function(h,i){return '<li><span class="hist-who">'+esc(h.user||'Unknown')+'</span> — '+esc(h.action)+(editable?' <button type="button" class="hist-del" data-delhist="'+i+'" title="Delete this entry">×</button>':'')+'<br><span class="hist-when">'+fmtTS(h.ts)+'</span></li>';}).join('');
+  return '<div class="field history-block"><label>History · who updated what'+(editable?' <button type="button" class="btn ghost xs" id="histClear" style="margin-left:8px">Clear all</button>':'')+'</label><ul class="history-list">'+items+'</ul></div>';}
+// Admin-only: lets an editor correct or clear a unit/task's history log
+// in place (e.g. a mis-entered note) without touching anything else in
+// the form. Repaints just the history block, not the whole editor, so it
+// doesn't disturb whatever else is mid-edit.
+function bindHistory(mount,obj){var box=mount.querySelector('.history-block');if(!box)return;
+  box.querySelectorAll('[data-delhist]').forEach(function(b){b.addEventListener('click',function(){
+    if(!confirm('Delete this history entry? This can’t be undone.'))return;
+    obj.history.splice(+b.getAttribute('data-delhist'),1);paintHistory(mount,obj);});});
+  var clr=box.querySelector('#histClear');if(clr)clr.addEventListener('click',function(){
+    if(!confirm('Clear all history for this record? This can’t be undone.'))return;
+    obj.history=[];paintHistory(mount,obj);});}
+function paintHistory(mount,obj){var box=mount.querySelector('.history-block');if(!box)return;
+  var tmp=document.createElement('div');tmp.innerHTML=historyBlock(obj.history,true);
+  box.replaceWith(tmp.firstChild);bindHistory(mount,obj);}
 function saveStatusOnly(){if(!edit||!edit.id)return;var c=CHARS.find(function(x){return x.id===edit.id;});if(!c)return;
   var oldStatus=Object.assign(defStatus(),c.status||{}),oldCompleted=isDone(c),oldImgIds=galleryImages(edit.id).map(function(im){return im.id;});
   var oldModeled=c.modeledBy||'',oldTextured=c.texturedBy||'';
@@ -2370,7 +2403,11 @@ function saveEdit(){if(!edit.name||!String(edit.name).trim()){toast('Name is req
     // rebuilt here would silently drop a character back out of the Tasks views
     // every time it's saved from the normal character editor.
     pinnedToTasks:!!(oldC&&oldC.pinnedToTasks),
-    history:(oldC&&oldC.history)?oldC.history.slice():[]};
+    // history comes from edit (the in-memory copy), not oldC (the server's
+    // copy), so that an admin's edits to it in this editor — e.g. deleting
+    // an entry via bindHistory — actually stick instead of being overwritten
+    // by the untouched server copy on save.
+    history:edit.history?edit.history.slice():[]};
   var ops=imageOps(id).concat(weaponImageOps(id));
   if(rec.primaryImageId==null&&edit.images.length)rec.primaryImageId=edit.images[0].id;
   var newImgIds=edit.images.map(function(im){return im.id;});
