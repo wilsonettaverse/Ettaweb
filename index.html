@@ -1110,10 +1110,21 @@ function flat(c,withImg){var s=statusOf(c);var r=reviewOf(c);var sd=sprintDef(c.
 function syncUpsert(c){return sheetPost({action:'upsert',character:flat(c,true)});}
 function syncDelete(id,clanKey){return sheetPost({action:'delete',id:id,clanName:clanNameOf(clanKey)});}
 function syncAll(){if(!SHEET_URL){toast('Add your Apps Script URL first');return;}
-  var all=CHARS.slice(),chunk=10,i=0;toast('Pushing '+all.length+' rows (with images) across '+CLAN_ORDER.length+' clan tabs\u2026');
-  (function next(){if(i>=all.length){toast('Pushed all rows to your sheet');return;}
+  var all=CHARS.slice(),chunk=10,i=0,total=all.length,sent=0;
+  var btn=el('setSyncAll');if(btn)btn.disabled=true;
+  var box=el('syncProgress');
+  function paintSync(label){if(!box)return;box.style.display='block';
+    box.innerHTML=(label||('Pushing to your sheet\u2026 '+sent+' / '+total+' rows'))
+      +'<div class="astat-bar" style="margin-top:4px"><i style="width:'+(total?Math.round(sent/total*100):100)+'%"></i></div>';}
+  toast('Pushing '+total+' rows (with images) across '+CLAN_ORDER.length+' clan tabs\u2026');
+  paintSync();
+  (function next(){if(i>=all.length){
+      if(btn)btn.disabled=false;
+      paintSync('Pushed all '+total+' rows to your sheet');
+      if(box)setTimeout(function(){box.style.display='none';},3000);
+      toast('Pushed all rows to your sheet');return;}
     var part=all.slice(i,i+chunk);i+=chunk;
-    sheetPost({action:'bulk',characters:part.map(function(c){return flat(c,true);})}).then(function(){setTimeout(next,350);});
+    sheetPost({action:'bulk',characters:part.map(function(c){return flat(c,true);})}).then(function(){sent=Math.min(i,total);paintSync();setTimeout(next,350);});
   })();}
 function sheetPost(payload){
   if(!SHEET_URL)return Promise.resolve(false);
@@ -1875,6 +1886,28 @@ function quickDeleteTask(id){if(!isAdmin())return;var t=TASKS.find(function(x){r
   var ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
   Promise.all(ops).then(loadCaches).then(function(){toast('Task removed');if(taskEdit&&taskEdit.id===id){taskEdit=null;renderTaskEditor(null);}paintTaskList();}).catch(function(err){toast('Delete failed: '+err);});}
 
+/* ---------- upload progress (shown while a save with new/changed images is
+   in flight, so people can see it's still working instead of wondering if
+   it hung — and so the Save button being disabled stops a re-click from
+   firing a second, overlapping upload and leaving things half-saved) ---------- */
+function saveProgressBox(mount){if(!mount)return null;var box=mount.querySelector('.save-progress');
+  if(!box){box=document.createElement('div');box.className='save-progress hint';box.style.cssText='display:none;margin:8px 0 0';
+    var actions=mount.querySelector('.editor-actions');if(actions&&actions.parentNode)actions.parentNode.insertBefore(box,actions);}
+  return box;}
+function setSaveProgress(mount,done,total){var box=saveProgressBox(mount);if(!box)return;
+  if(!total){box.style.display='none';box.innerHTML='';return;}
+  box.style.display='block';
+  box.innerHTML='Uploading images… '+done+' / '+total+'<div class="astat-bar" style="margin-top:4px"><i style="width:'+Math.round(done/total*100)+'%"></i></div>';}
+// Wraps each image op (a Promise from putImg/delImg) so settling it —
+// success or failure — advances a shared counter, without changing what the
+// op resolves/rejects with.
+function trackImageOps(ops,onProgress){var total=ops.length,done=0;if(!total)return ops;
+  onProgress(0,total);
+  return ops.map(function(p){return p.then(function(v){done++;onProgress(done,total);return v;},function(err){done++;onProgress(done,total);throw err;});});}
+function beginSaveProgress(mount,btnId,imgOps){var btn=el(btnId);if(btn)btn.disabled=true;
+  return trackImageOps(imgOps,function(done,total){setSaveProgress(mount,done,total);});}
+function endSaveProgress(mount,btnId){setSaveProgress(mount,0,0);var btn=el(btnId);if(btn)btn.disabled=false;}
+
 /* ---------- task editor (mirrors the character editor, trimmed to task fields) ---------- */
 var taskEdit=null;
 function blankTask(){return{id:null,name:'',category:'',sprint:lastSprint(),images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',completed:false,review:{status:'',count:0,redos:0},history:[],createdAt:null};}
@@ -1986,7 +2019,8 @@ function saveTaskEdit(){if(!taskEdit.name||!String(taskEdit.name).trim()){toast(
   // entry via bindHistory — actually stick instead of being overwritten by
   // the untouched server copy on save.
   var rec={id:id,name:String(taskEdit.name).trim(),category:String(taskEdit.category||'').trim(),sprint:Number(taskEdit.sprint)||firstSprint(),status:Object.assign(defStatus(),taskEdit.status),modeledBy:taskEdit.modeledBy||'',texturedBy:taskEdit.texturedBy||'',completed:!!taskEdit.completed,primaryImageId:taskEdit.primaryId,updatedAt:Date.now(),createdAt:(oldT&&oldT.createdAt)||taskEdit.createdAt||Date.now(),history:taskEdit.history?taskEdit.history.slice():[]};
-  var ops=taskImageOps(id);
+  var taskMount=el('taskEditorMount');
+  var ops=beginSaveProgress(taskMount,'etSave',taskImageOps(id));
   if(rec.primaryImageId==null&&taskEdit.images.length)rec.primaryImageId=taskEdit.images[0].id;
   var newImgIds=taskEdit.images.map(function(im){return im.id;});
   if(!oldT){
@@ -2003,13 +2037,14 @@ function saveTaskEdit(){if(!taskEdit.name||!String(taskEdit.name).trim()){toast(
     pushHistory(rec,note);
   }
   ops.push(putTask(rec));
-  Promise.all(ops).then(loadCaches).then(function(){toast(taskEdit.id?'Task updated':'Task created');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Save failed: '+err);});}
+  Promise.all(ops).then(loadCaches).then(function(){endSaveProgress(taskMount,'etSave');toast(taskEdit.id?'Task updated':'Task created');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){endSaveProgress(taskMount,'etSave');toast('Save failed: '+err);});}
 function saveTaskStatusOnly(){if(!taskEdit||!taskEdit.id)return;var t=TASKS.find(function(x){return x.id===taskEdit.id;});if(!t)return;
   var oldStatus=Object.assign(defStatus(),t.status||{}),oldCompleted=isDone(t),oldImgIds=(IMAGES[taskEdit.id]||[]).map(function(im){return im.id;});
   var oldModeled=t.modeledBy||'',oldTextured=t.texturedBy||'';
   t.status=Object.assign(defStatus(),taskEdit.status);t.completed=!!taskEdit.completed;t.updatedAt=Date.now();
   t.modeledBy=taskEdit.modeledBy||'';t.texturedBy=taskEdit.texturedBy||'';
-  var ops=taskImageOps(taskEdit.id);
+  var taskStatusMount=el('taskEditorMount');
+  var ops=beginSaveProgress(taskStatusMount,'etSaveStatus',taskImageOps(taskEdit.id));
   t.primaryImageId=taskEdit.primaryId;if(t.primaryImageId==null&&taskEdit.images.length)t.primaryImageId=taskEdit.images[0].id;
   var newImgIds=taskEdit.images.map(function(im){return im.id;});
   var added=newImgIds.filter(function(iid){return oldImgIds.indexOf(iid)<0;}).length;
@@ -2017,7 +2052,7 @@ function saveTaskStatusOnly(){if(!taskEdit||!taskEdit.id)return;var t=TASKS.find
   var note=assignNote(historyNote(oldStatus,t.status,oldCompleted,t.completed,added,removed),oldModeled,t.modeledBy,oldTextured,t.texturedBy);
   pushHistory(t,note);
   ops.push(putTask(t));
-  Promise.all(ops).then(loadCaches).then(function(){toast('Status updated');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
+  Promise.all(ops).then(loadCaches).then(function(){endSaveProgress(taskStatusMount,'etSaveStatus');toast('Status updated');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){endSaveProgress(taskStatusMount,'etSaveStatus');toast('Update failed: '+err);});}
 function deleteTaskEdit(){if(!taskEdit.id||!isAdmin())return;if(!confirm('Delete "'+taskEdit.name+'" and its images?'))return;var id=taskEdit.id,ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
   Promise.all(ops).then(loadCaches).then(function(){toast('Task deleted');taskEdit=null;renderTaskEditor(null);paintTaskList();}).catch(function(err){toast('Delete failed: '+err);});}
 
@@ -2067,6 +2102,7 @@ function renderSettingsInner(mount){if(!mount)return;
   mount.innerHTML='<div class="panel"><h3>Settings &amp; Sheet sync</h3>'
     +'<div class="field"><label>Google Sheet sync — Apps Script Web App URL</label><input id="setSheet" type="url" placeholder="https://script.google.com/macros/s/……/exec" value="'+esc(SHEET_URL)+'"><div class="hint">Every add / edit / status change is pushed to your sheet, <b>including the character\u2019s first image</b>. One-way (app \u2192 sheet). Paste the <b>Apps Script Web App URL</b> (ends in <b>/exec</b>) — not the spreadsheet link. See the setup guide.</div></div>'
     +'<div class="panel-row"><button class="btn accent sm" id="setSaveSheet">Save URL</button><button class="btn ghost sm" id="setSyncAll">Push all rows now</button><button class="btn ghost sm" id="setGuide">Setup guide</button></div>'
+    +'<div id="syncProgress" class="hint" style="display:none;margin:-4px 0 8px"></div>'
     +'<div class="divider"></div>'
     +'<div class="field"><label>Recovery email</label><input id="setRecEmail" type="email" placeholder="you@example.com" value="'+esc(ADMIN_EMAIL)+'"><div class="hint">If you ever lose the admin password, “Forgot password?” on the login screen emails a one-time code here.</div></div>'
     +'<div class="panel-row"><button class="btn accent sm" id="setSaveEmail">Save recovery email</button></div>'
@@ -2374,7 +2410,8 @@ function saveStatusOnly(){if(!edit||!edit.id)return;var c=CHARS.find(function(x)
   var oldWeaponName=c.weaponName||'',oldWeapon=weaponImageOf(edit.id);
   c.status=Object.assign(defStatus(),edit.status);c.completed=!!edit.completed;c.updatedAt=Date.now();
   c.modeledBy=edit.modeledBy||'';c.texturedBy=edit.texturedBy||'';c.weaponName=edit.weaponName||'';
-  var ops=imageOps(edit.id).concat(weaponImageOps(edit.id));
+  var statusMount=el('editorMount');
+  var ops=beginSaveProgress(statusMount,'edSaveStatus',imageOps(edit.id).concat(weaponImageOps(edit.id)));
   c.primaryImageId=edit.primaryId;if(c.primaryImageId==null&&edit.images.length)c.primaryImageId=edit.images[0].id;
   var newImgIds=edit.images.map(function(im){return im.id;});
   var added=newImgIds.filter(function(iid){return oldImgIds.indexOf(iid)<0;}).length;
@@ -2384,7 +2421,7 @@ function saveStatusOnly(){if(!edit||!edit.id)return;var c=CHARS.find(function(x)
   note=weaponNote(note,oldWeaponName,c.weaponName,weaponImgChanged);
   pushHistory(c,note);
   ops.push(putChar(c));
-  Promise.all(ops).then(loadCaches).then(function(){syncUpsert(c);toast('Status updated');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
+  Promise.all(ops).then(loadCaches).then(function(){endSaveProgress(statusMount,'edSaveStatus');syncUpsert(c);toast('Status updated');edit=null;renderEditor(null);paintDashList();}).catch(function(err){endSaveProgress(statusMount,'edSaveStatus');toast('Update failed: '+err);});}
 function paintThumbs(){var mount=el('imgThumbs');if(!mount)return;if(!edit.images.length){mount.innerHTML='<div class="hint" style="grid-column:1/-1">No images yet.</div>';return;}
   mount.innerHTML=edit.images.map(function(im,i){var isP=(edit.primaryId?edit.primaryId===im.id:i===0);
     var cap=im.by?('<div class="thumb-cap">'+esc(im.by)+(im.ts?' \u00b7 '+fmtTS(im.ts):'')+'</div>'):'';
@@ -2409,7 +2446,8 @@ function saveEdit(){if(!edit.name||!String(edit.name).trim()){toast('Name is req
     // an entry via bindHistory — actually stick instead of being overwritten
     // by the untouched server copy on save.
     history:edit.history?edit.history.slice():[]};
-  var ops=imageOps(id).concat(weaponImageOps(id));
+  var editMount=el('editorMount');
+  var ops=beginSaveProgress(editMount,'edSave',imageOps(id).concat(weaponImageOps(id)));
   if(rec.primaryImageId==null&&edit.images.length)rec.primaryImageId=edit.images[0].id;
   var newImgIds=edit.images.map(function(im){return im.id;});
   if(!oldC){
@@ -2429,12 +2467,46 @@ function saveEdit(){if(!edit.name||!String(edit.name).trim()){toast('Name is req
     pushHistory(rec,note);
   }
   ops.push(putChar(rec));
-  Promise.all(ops).then(loadCaches).then(function(){syncUpsert(rec);toast(edit.id?'Unit updated':'Unit created');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Save failed: '+err);});}
+  Promise.all(ops).then(loadCaches).then(function(){endSaveProgress(editMount,'edSave');syncUpsert(rec);toast(edit.id?'Unit updated':'Unit created');edit=null;renderEditor(null);paintDashList();}).catch(function(err){endSaveProgress(editMount,'edSave');toast('Save failed: '+err);});}
 function deleteEdit(){if(!edit.id||!isAdmin())return;if(!confirm('Delete "'+edit.name+'" and its images?'))return;var id=edit.id,ops=[delChar(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
   Promise.all(ops).then(loadCaches).then(function(){syncDelete(id,edit.clan);toast('Unit deleted');edit=null;renderEditor(null);paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
 
 /* ---------- export / import / reset ---------- */
-function exportData(){api('export').then(function(d){var blob=new Blob([JSON.stringify(d)],{type:'application/json'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='character_codex_backup.json';a.click();URL.revokeObjectURL(a.href);toast('Exported backup');}).catch(function(){toast('Export failed — sign in required');});}
+// Both exports used to call the server's /api/export, which read every
+// character's image out of Blob storage and embedded them all into ONE
+// response. That stopped working once the roster grew large enough: reading
+// hundreds of images inside a single function invocation runs past
+// Netlify's execution time limit (or its response-size limit), and the
+// call just comes back as a bare 502 — which exportData()'s old catch block
+// then misreported as "sign in required", since it assumed every failure
+// meant an expired session. Building the backup here instead sidesteps the
+// whole problem: the character/task data is already sitting in CHARS/TASKS/
+// IMAGES (loaded once at boot, kept current locally), and each image's
+// bytes come from the lightweight /api/image endpoint — already public,
+// already fast, already used for every <img> tag in the app — fetched a
+// handful at a time with visible progress, instead of asking one function
+// to assemble everything at once.
+function allImagesFlat(){var all=[];Object.keys(IMAGES).forEach(function(cid){(IMAGES[cid]||[]).forEach(function(im){all.push(im);});});return all;}
+function fetchImageAsDataUrl(im){
+  return fetch(im.data).then(function(r){if(!r.ok)throw new Error('image fetch failed ('+r.status+')');return r.blob();})
+    .then(function(blob){return new Promise(function(res,rej){var fr=new FileReader();fr.onload=function(){res(fr.result);};fr.onerror=function(){rej(new Error('could not read an image'));};fr.readAsDataURL(blob);});})
+    .then(function(dataUrl){return{id:im.id,charId:im.charId,name:im.name||'',ts:im.ts||Date.now(),by:im.by||null,kind:im.kind||'',data:dataUrl};});}
+function buildFullBackup(onProgress){
+  var imgs=allImagesFlat(),total=imgs.length,done=0,results=new Array(total),CONCURRENCY=6;
+  if(!total)return Promise.resolve({version:3,characters:CHARS,tasks:TASKS,images:[]});
+  if(onProgress)onProgress(0,total);
+  return new Promise(function(resolve,reject){
+    var idx=0,active=0,failed=null;
+    function pump(){if(failed)return;
+      if(done>=total)return resolve({version:3,characters:CHARS,tasks:TASKS,images:results});
+      while(active<CONCURRENCY&&idx<total){(function(i){active++;idx++;
+        fetchImageAsDataUrl(imgs[i]).then(function(entry){results[i]=entry;active--;done++;if(onProgress)onProgress(done,total);pump();})
+          .catch(function(err){failed=err;reject(err);});})(idx);}}
+    pump();});}
+function exportData(){toast('Preparing backup…');
+  buildFullBackup(function(done,total){toast('Preparing backup… '+done+' / '+total+' images');})
+    .then(function(d){var blob=new Blob([JSON.stringify(d)],{type:'application/json'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='character_codex_backup.json';a.click();URL.revokeObjectURL(a.href);toast('Exported backup');})
+    .catch(function(err){toast('Export failed: '+(err&&err.message?err.message:err));});}
 // The Google Sheet sync (above) sends each character's image along with it,
 // but a Sheet can't display that as an actual picture without extra Apps
 // Script code on the receiving end — so in practice the sheet never shows
@@ -2452,7 +2524,7 @@ function loadScript(src){return new Promise(function(res,rej){
   document.head.appendChild(s);});}
 function exportExcel(){toast('Preparing Excel export…');
   loadScript('https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js')
-    .then(function(){return api('export');})
+    .then(function(){return buildFullBackup(function(done,total){toast('Gathering images… '+done+' / '+total);});})
     .then(buildExcelWorkbook)
     .then(function(wb){return wb.xlsx.writeBuffer();})
     .then(function(buf){var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
