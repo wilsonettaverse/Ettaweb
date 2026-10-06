@@ -2492,20 +2492,26 @@ function fetchImageAsDataUrl(im){
     .then(function(blob){return new Promise(function(res,rej){var fr=new FileReader();fr.onload=function(){res(fr.result);};fr.onerror=function(){rej(new Error('could not read an image'));};fr.readAsDataURL(blob);});})
     .then(function(dataUrl){return{id:im.id,charId:im.charId,name:im.name||'',ts:im.ts||Date.now(),by:im.by||null,kind:im.kind||'',data:dataUrl};});}
 function buildFullBackup(onProgress){
-  var imgs=allImagesFlat(),total=imgs.length,done=0,results=new Array(total),CONCURRENCY=6;
-  if(!total)return Promise.resolve({version:3,characters:CHARS,tasks:TASKS,images:[]});
+  var imgs=allImagesFlat(),total=imgs.length,done=0,skipped=0,results=new Array(total),CONCURRENCY=6;
+  if(!total)return Promise.resolve({version:3,characters:CHARS,tasks:TASKS,images:[],skipped:0});
   if(onProgress)onProgress(0,total);
-  return new Promise(function(resolve,reject){
-    var idx=0,active=0,failed=null;
-    function pump(){if(failed)return;
-      if(done>=total)return resolve({version:3,characters:CHARS,tasks:TASKS,images:results});
+  return new Promise(function(resolve){
+    var idx=0,active=0;
+    function pump(){
+      if(done>=total)return resolve({version:3,characters:CHARS,tasks:TASKS,images:results.filter(Boolean),skipped:skipped});
       while(active<CONCURRENCY&&idx<total){(function(i){active++;idx++;
-        fetchImageAsDataUrl(imgs[i]).then(function(entry){results[i]=entry;active--;done++;if(onProgress)onProgress(done,total);pump();})
-          .catch(function(err){failed=err;reject(err);});})(idx);}}
+        // A handful of image records can outlive their stored bytes (deleted,
+        // or never finished uploading) — one missing image used to be silently
+        // dropped by the old server-side export too (see export.js), so skip
+        // it here the same way instead of failing the whole backup over it.
+        fetchImageAsDataUrl(imgs[i]).then(function(entry){results[i]=entry;},function(err){
+          skipped++;console.warn('export: skipping image '+(imgs[i]&&imgs[i].id)+' — '+(err&&err.message?err.message:err));
+        }).then(function(){active--;done++;if(onProgress)onProgress(done,total);pump();});})(idx);}}
     pump();});}
 function exportData(){toast('Preparing backup…');
   buildFullBackup(function(done,total){toast('Preparing backup… '+done+' / '+total+' images');})
-    .then(function(d){var blob=new Blob([JSON.stringify(d)],{type:'application/json'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='character_codex_backup.json';a.click();URL.revokeObjectURL(a.href);toast('Exported backup');})
+    .then(function(d){var blob=new Blob([JSON.stringify(d)],{type:'application/json'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='character_codex_backup.json';a.click();URL.revokeObjectURL(a.href);
+      toast(d.skipped?('Exported backup ('+d.skipped+' image(s) could not be found and were skipped)'):'Exported backup');})
     .catch(function(err){toast('Export failed: '+(err&&err.message?err.message:err));});}
 // The Google Sheet sync (above) sends each character's image along with it,
 // but a Sheet can't display that as an actual picture without extra Apps
@@ -2525,12 +2531,13 @@ function loadScript(src){return new Promise(function(res,rej){
 function exportExcel(){toast('Preparing Excel export…');
   loadScript('https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js')
     .then(function(){return buildFullBackup(function(done,total){toast('Gathering images… '+done+' / '+total);});})
-    .then(buildExcelWorkbook)
-    .then(function(wb){return wb.xlsx.writeBuffer();})
-    .then(function(buf){var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    .then(function(d){return{wb:buildExcelWorkbook(d),skipped:d.skipped};})
+    .then(function(r){return r.wb.xlsx.writeBuffer().then(function(buf){return{buf:buf,skipped:r.skipped};});})
+    .then(function(r){var blob=new Blob([r.buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
       var now=new Date();var a=document.createElement('a');a.href=URL.createObjectURL(blob);
       a.download='character_codex_'+now.getFullYear()+'-'+pad2(now.getMonth()+1)+'-'+pad2(now.getDate())+'.xlsx';
-      a.click();URL.revokeObjectURL(a.href);toast('Excel export ready');})
+      a.click();URL.revokeObjectURL(a.href);
+      toast(r.skipped?('Excel export ready ('+r.skipped+' image(s) could not be found and were skipped)'):'Excel export ready');})
     .catch(function(err){toast('Excel export failed: '+(err&&err.message?err.message:err));});}
 var XLSX_HEADERS=['Image','#','Name','Clan','Sprint','Class','Type','Tier','Gender','Height','Mana','L1','L6','L12','Abilities','Approved','Modeling','Rigged','Stored','Completed','Modeled by','Textured by'];
 var XLSX_COL_WIDTHS=[14,6,22,14,10,12,10,10,9,9,7,12,12,12,26,9,9,8,8,10,14,14];
