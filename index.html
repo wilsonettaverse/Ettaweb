@@ -137,6 +137,11 @@ img{max-width:100%; display:block}
 @media (max-width:880px){.card-grid{grid-template-columns:repeat(3,1fr)}}
 @media (max-width:620px){.card-grid{grid-template-columns:repeat(2,1fr); gap:12px}}
 @media (max-width:420px){.card-grid{grid-template-columns:1fr}}
+.sprint-group{margin-bottom:22px}
+.sprint-group .card-grid{margin-top:12px}
+.sprint-group-h{display:flex; align-items:center; gap:10px; margin:0; padding-bottom:8px; border-bottom:1px solid var(--line-2); font-size:15px}
+.sprint-cur-tag{font-size:10px; padding:2px 8px; text-transform:uppercase; letter-spacing:.06em}
+.sprint-group-count{margin-left:auto; font-weight:400}
 .ccard{position:relative; background:var(--surface); border:1px solid var(--line-2); border-radius:var(--radius);
   overflow:hidden; display:flex; flex-direction:column; cursor:pointer; text-align:left;
   transition:transform .16s, box-shadow .16s, border-color .16s; padding:0}
@@ -882,12 +887,28 @@ body.on-clan .foot{max-width:1580px}
 .filt>span{font-family:var(--mono); font-size:10.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--bark)}
 .filt-sel{background:var(--surface-2); color:var(--ink); border:1px solid var(--line-2); border-radius:9px; padding:7px 10px; font-size:13px}
 .filt-sel:focus{border-color:var(--accent); outline:none}
+.gsearch{position:relative; flex:1; max-width:260px; display:flex; align-items:center}
+.gsearch-ic{position:absolute; left:11px; color:var(--bark); pointer-events:none; font-size:13px}
+.gsearch input{width:100%; background:var(--surface-2); border:1px solid var(--line-2); border-radius:9px; padding:7px 10px 7px 30px; font-size:13px; color:var(--ink)}
+.gsearch input:focus{border-color:var(--accent); outline:none}
+.gsearch-results{position:absolute; top:calc(100% + 6px); left:0; right:0; background:var(--surface); border:1px solid var(--line-2); border-radius:10px; box-shadow:var(--shadow); max-height:360px; overflow-y:auto; z-index:50; display:none}
+.gsearch-results.show{display:block}
+.gsearch-row{display:flex; align-items:center; gap:9px; padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--line-2)}
+.gsearch-row:last-child{border-bottom:none}
+.gsearch-row:hover,.gsearch-row.hl{background:var(--surface-2)}
+.gsearch-row img{width:30px; height:30px; border-radius:7px; object-fit:cover; background:var(--surface-3)}
+.gsearch-row .gs-noimg{width:30px; height:30px; border-radius:7px; background:var(--surface-3); display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--bark)}
+.gsearch-row .gs-name{font-weight:600; font-size:13px}
+.gsearch-row .gs-meta{font-size:11px; color:var(--bark)}
+.gsearch-empty{padding:10px 12px; font-size:12px; color:var(--bark)}
+@media (max-width:900px){.gsearch{display:none}}
 
 </style></head>
 <body>
   <nav class="topbar"><div class="topbar-in">
     <a class="brand" href="#/"><b>Character Codex</b><span>Etta Global Partners</span></a>
     <div class="nav"><a href="#/" data-nav="home">Home</a><a href="#/clan/aranyani" data-nav="clan">Clans</a><a href="#/tasks" data-nav="tasks">Tasks</a><a href="#/dashboard" data-nav="dashboard">Dashboard</a><a href="#/pipeline" data-nav="pipeline">Pipeline</a></div>
+    <div class="gsearch" id="gsearchWrap"><span class="mono gsearch-ic">⌕</span><input id="gsearchInput" type="search" placeholder="Search all clans…" autocomplete="off"><div class="gsearch-results" id="gsearchResults"></div></div>
     <div class="user-slot" id="userSlot"></div>
   </div></nav>
   <div id="app"></div><div class="toast" id="toast"></div>
@@ -949,6 +970,20 @@ function sprintEnded(n){var s=sprintDef(n);return !!(s&&s.end&&new Date(s.end+'T
    Applies only to the Tasks views (allTaskLikeEntries) — the Roster and clan
    pages keep showing every character regardless of sprint or completion. */
 function isArchivedTask(t){return isDone(t)&&sprintEnded(t.sprint||1);}
+// The "current" sprint for grouping the Tasks views: the first one (in
+// SPRINT_DEFS order) that hasn't ended yet. If every defined sprint has
+// already ended, the last one stands in as "current" rather than nothing
+// matching at all.
+function currentSprintNum(){for(var i=0;i<SPRINT_DEFS.length;i++){if(!sprintEnded(SPRINT_DEFS[i].n))return SPRINT_DEFS[i].n;}return lastSprint();}
+// Buckets an already-filtered task/character list by sprint, sorted so the
+// current sprint's group always comes first and the rest follow in sprint
+// order — used by both Tasks views (paintTasksPage, paintTaskList) so
+// "what's active right now" never gets buried under older finished sprints.
+function groupBySprintOrdered(list){var cur=currentSprintNum(),groups={};
+  list.forEach(function(t){var sp=t.sprint||1;(groups[sp]=groups[sp]||[]).push(t);});
+  var nums=Object.keys(groups).map(Number);
+  nums.sort(function(a,b){if(a===cur)return -1;if(b===cur)return 1;return a-b;});
+  return nums.map(function(n){return{n:n,cur:n===cur,items:groups[n]};});}
 /* ---------- artist sprint goals/scores ---------- */
 // Each artist's goal is 3.5 completed characters per sprint = a 100 score.
 // Some sprints hand an artist harder (complex) characters, so the goal for a
@@ -1020,6 +1055,10 @@ function isAdmin(){return CURRENT_USER===ADMIN_NAME&&AUTHED;}
 function findUser(name){for(var i=0;i<USERS.length;i++)if(USERS[i].name===name)return USERS[i];return null;}
 function userRole(name){if(name===ADMIN_NAME)return 'Admin';var u=findUser(name);return u?u.role:'Viewer';}
 function userNames(){return USERS.map(function(u){return u.name;});}
+// Reviewers don't model or texture anything, so they shouldn't clutter a
+// filter meant to find who worked on a unit — used by the clan page's
+// Modeler/Texturer dropdowns.
+function artistNames(){return USERS.filter(function(u){return u.role!=='Reviewer';}).map(function(u){return u.name;});}
 // Names that still sit on some character/task assignment but belong to no
 // one in the current team list — almost always leftovers from a rename that
 // didn't fully reach every record (the old client-only rename, or a record
@@ -1092,6 +1131,43 @@ function loadCaches(){
   IMAGES={};REMOTE.images.forEach(function(im){(IMAGES[im.charId]=IMAGES[im.charId]||[]).push(im);});
   for(var k in IMAGES)IMAGES[k].sort(function(a,b){return a.ts-b.ts;});
   return Promise.resolve();}
+
+/* ---------- live background refresh ----------
+   Everyone shares one roster, so another teammate's save should show up here
+   without anyone having to reload the page. Polls the lightweight bootstrap
+   endpoint (character/task data plus image *links*, never image bytes — see
+   image.js — so this stays cheap even with a large roster) and repaints only
+   the plain list/grid views (dashboard roster & tasks tabs, the public Tasks
+   page, a clan page). It deliberately never touches an open editor's own
+   form state (edit/taskEdit) or re-runs the full route()/page rebuild, which
+   is what makes this safe to run in the background: imageOps/taskImageOps
+   only ever delete images this session explicitly removed (see their
+   comments), so a stale open editor can never clobber an image someone else
+   added in the meantime, even once this poll updates the shared IMAGES/CHARS
+   caches underneath it. */
+var LIVE_POLL_MS=15000,liveRefreshTimer=null,liveRefreshing=false;
+function repaintLive(){
+  var hash=location.hash.replace(/^#/,'')||'/';var p=hash.split('/').filter(Boolean);
+  if(p[0]==='clan'&&el('clanBody')){paintClan();return;}
+  if(p[0]==='tasks'&&el('taskBody')){paintTasksPage();return;}
+  if(p[0]==='dashboard'){
+    if(el('dashList'))paintDashList();
+    else if(el('taskList'))paintTaskList();
+    else if(dashTab==='scores'&&el('scoresMount'))renderScoresDash(el('scoresMount'));
+    else if(dashTab==='analytics'&&el('analyticsMount'))renderAnalytics(el('analyticsMount'));
+  }}
+function liveRefreshTick(){
+  if(document.hidden||liveRefreshing)return;
+  liveRefreshing=true;
+  refreshRemote().then(loadCaches).then(function(){liveRefreshing=false;repaintLive();})
+    .catch(function(){liveRefreshing=false;}); // transient network hiccup — just try again next tick, no toast spam
+}
+function startLiveRefresh(){if(liveRefreshTimer)return;liveRefreshTimer=setInterval(liveRefreshTick,LIVE_POLL_MS);
+  // In a real browser this is a no-op (the returned id is a plain number with
+  // no .unref) — it only matters for a Node/jsdom host (e.g. an automated
+  // test loading this page), where an un-ref'd interval can't by itself keep
+  // the process alive forever.
+  if(liveRefreshTimer&&typeof liveRefreshTimer.unref==='function')liveRefreshTimer.unref();}
 
 function seedIfEmpty(){if(REMOTE.characters&&REMOTE.characters.length)return Promise.resolve();
   var sc=window.SEED_CHARACTERS||[], si=window.SEED_IMAGES||{};
@@ -1193,6 +1269,29 @@ function route(){stopParticles();document.body.classList.remove('on-home');var h
   return renderHome();}
 function setActiveNav(k){document.querySelectorAll('.nav a').forEach(function(a){a.classList.toggle('active',a.getAttribute('data-nav')===k);});}
 
+/* ---------- global search (every clan at once, from the top bar) ----------
+   Lives outside #app (wired once at boot, not re-bound per route — see
+   boot()) so it keeps working no matter which page is showing. Complements
+   the existing per-clan search on each clan page rather than replacing it. */
+function globalSearchMatches(q){q=q.toLowerCase().trim();if(!q)return[];
+  return CHARS.filter(function(c){return c.name.toLowerCase().indexOf(q)>=0||(c.abilities||[]).join(' ').toLowerCase().indexOf(q)>=0||(c.arch||'').toLowerCase().indexOf(q)>=0;}).slice(0,8);}
+function paintGlobalSearch(q){var box=el('gsearchResults');if(!box)return;
+  var matches=globalSearchMatches(q);
+  if(!q.trim()){box.classList.remove('show');box.innerHTML='';return;}
+  if(!matches.length){box.innerHTML='<div class="gsearch-empty">No characters match "'+esc(q)+'"</div>';box.classList.add('show');return;}
+  box.innerHTML=matches.map(function(c){var img=primaryOf(c),m=CLAN_META[c.clan];
+    return '<div class="gsearch-row" data-gid="'+c.id+'">'+(img?'<img src="'+img.data+'">':'<span class="gs-noimg">'+esc(c.name.charAt(0))+'</span>')
+      +'<div><div class="gs-name">'+esc(c.name)+'</div><div class="gs-meta">'+esc(m?m.name:c.clan)+' · '+esc(c.arch)+'</div></div></div>';}).join('');
+  box.classList.add('show');
+  box.querySelectorAll('[data-gid]').forEach(function(row){row.addEventListener('click',function(){
+    var id=row.getAttribute('data-gid');closeGlobalSearch();openModal(id);});});}
+function closeGlobalSearch(){var box=el('gsearchResults'),input=el('gsearchInput');if(box){box.classList.remove('show');box.innerHTML='';}if(input)input.value='';}
+function initGlobalSearch(){var input=el('gsearchInput');if(!input)return;
+  input.addEventListener('input',function(){paintGlobalSearch(this.value);});
+  input.addEventListener('keydown',function(e){if(e.key==='Escape'){closeGlobalSearch();input.blur();}});
+  input.addEventListener('focus',function(){if(this.value.trim())paintGlobalSearch(this.value);});
+  document.addEventListener('click',function(e){var wrap=el('gsearchWrap');if(wrap&&!wrap.contains(e.target))closeGlobalSearch();});}
+
 /* ---------- theming ---------- */
 var DARKVARS=['--parchment','--surface','--surface-2','--surface-3','--ink','--ink-2','--bark','--line','--line-2'];
 function resetTheme(){var s=document.documentElement.style;s.removeProperty('--accent');s.removeProperty('--glow');DARKVARS.forEach(function(v){s.removeProperty(v);});document.body.classList.remove('theme-dark');document.body.classList.remove('on-clan');}
@@ -1216,7 +1315,12 @@ function startParticles(sel,cfg){
   if(!cfg)return;
   if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
   var container=document.querySelector(sel);if(!container)return;
-  activeParticles=makeParticles(container,cfg);
+  // The decorative particle background is a nice-to-have, not core function.
+  // Some browsers/extensions (canvas-fingerprint blockers, older engines,
+  // odd headless/test hosts) can make canvas 2D context calls throw — don't
+  // let that take down routing/live-refresh/search for the rest of the app.
+  try{activeParticles=makeParticles(container,cfg);}
+  catch(e){console.error('particle background failed to start; continuing without it',e);}
 }
 function makeParticles(container,cfg){
   var canvas=document.createElement('canvas');canvas.className='particle-canvas';
@@ -1298,26 +1402,26 @@ var clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',clan:'
 function renderClan(clanId){var m=CLAN_META[clanId];if(!m){location.hash='#/';return;}applyClanTheme(m);
   clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',clan:clanId};
   var switcher=CLAN_ORDER.map(function(id){return '<a href="#/clan/'+id+'" class="'+(id===clanId?'active':'')+'">'+esc(CLAN_META[id].name)+'</a>';}).join('');
-  var sprintChips=SPRINT_DEFS.map(function(s){return '<button class="chip" data-sprint="'+s.n+'" aria-pressed="false">'+esc(s.name)+'</button>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('');
   var archChips=ARCHES.map(function(a){return '<button class="chip" data-arch="'+a+'" aria-pressed="false">'+a+'</button>';}).join('');
   var typeChips=TYPES.map(function(t){return '<button class="chip" data-type="'+t+'" aria-pressed="false">'+t+'</button>';}).join('');
-  var modelerOpts='<option value="">All modelers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
-  var texturerOpts='<option value="">All texturers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
+  var modelerOpts='<option value="">All modelers</option>'+artistNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
+  var texturerOpts='<option value="">All texturers</option>'+artistNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
   APP.innerHTML='<header class="clan-hero"><div class="wrap wide clan-hero-in">'
     +'<div class="clan-hero-text"><div class="el">'+esc(m.element)+' Clan</div><h1>'+esc(m.name)+'</h1><p>'+esc(m.tag)+'</p></div>'
     +'<div class="clan-glyph">'+clanGlyph(clanId)+'</div></div></header>'
     +'<div class="clan-switch-wrap"><div class="wrap wide"><div class="clan-switch">'+switcher+'</div></div></div>'
     +'<main class="wrap wide">'+memBanner()
     +'<div class="filters"><div class="search"><span class="mono" style="color:var(--bark)">\u2315</span><input id="clanSearch" type="search" placeholder="Search '+esc(m.name)+' units, abilities\u2026"></div>'
+    +'<label class="filt"><span>Sprint</span><select id="clanSprint" class="filt-sel">'+sprintOpts+'</select></label>'
     +'<label class="filt"><span>Modeler</span><select id="clanModeler" class="filt-sel">'+modelerOpts+'</select></label>'
     +'<label class="filt"><span>Texturer</span><select id="clanTexturer" class="filt-sel">'+texturerOpts+'</select></label></div>'
-    +'<div class="filters" style="padding-top:0"><div class="chipset">'+sprintChips+'</div></div>'
     +'<div class="filters" style="padding-top:0"><div class="chipset">'+archChips+'</div><div class="chipset">'+typeChips+'</div></div>'
     +'<div class="count-note" id="clanCount"></div><div id="clanBody"></div></main>'+footer();
   el('clanSearch').addEventListener('input',function(){clanState.search=this.value.toLowerCase();paintClan();});
+  el('clanSprint').addEventListener('change',function(){clanState.sprint=this.value;paintClan();});
   el('clanModeler').addEventListener('change',function(){clanState.modeler=this.value;paintClan();});
   el('clanTexturer').addEventListener('change',function(){clanState.texturer=this.value;paintClan();});
-  bindChips('[data-sprint]','sprint',function(v){return v;});
   bindChips('[data-arch]','arch');bindChips('[data-type]','type');
   paintClan();startParticles('.clan-hero',PARTICLE_CFG[clanId]);window.scrollTo(0,0);}
 function bindChips(sel,key,map){APP.querySelectorAll(sel).forEach(function(b){b.addEventListener('click',function(){
@@ -1446,10 +1550,14 @@ function matchTaskState(t){
   // pick that sprint from the filter or search for it.
   if(isArchivedTask(t)&&!taskState.sprint&&!taskState.search)return false;
   return true;}
+function sprintGroupHeader(g){return '<h3 class="sprint-group-h">'+esc(sprintName(g.n))+(g.cur?' <span class="chip on sprint-cur-tag">Current</span>':'')
+    +'<span class="hint sprint-group-count">'+g.items.length+' task'+(g.items.length===1?'':'s')+'</span></h3>';}
 function paintTasksPage(){var list=allTaskLikeEntries().filter(matchTaskState);
   el('taskCount').textContent=list.length+' task'+(list.length===1?'':'s')+' shown';
   var body=el('taskBody');
-  body.innerHTML=list.length?'<div class="card-grid">'+list.map(taskCardHTML).join('')+'</div>':'<div class="empty-state"><div class="glyph">∅</div><p>No tasks match these filters.</p></div>';
+  if(!list.length){body.innerHTML='<div class="empty-state"><div class="glyph">∅</div><p>No tasks match these filters.</p></div>';return;}
+  var groups=groupBySprintOrdered(list);
+  body.innerHTML=groups.map(function(g){return '<div class="sprint-group">'+sprintGroupHeader(g)+'<div class="card-grid">'+g.items.map(taskCardHTML).join('')+'</div></div>';}).join('');
   body.querySelectorAll('.ccard').forEach(function(card){card.addEventListener('click',function(){
     var id=card.getAttribute('data-tid');
     if(card.getAttribute('data-ischar')==='1')openModal(id);else openTaskModal(id);});});}
@@ -1499,7 +1607,7 @@ function renderDashboard(){resetTheme();
   var who='<div class="cr-who"><span class="uw-ava'+(admin?' adm':'')+'">'+esc(initials(CURRENT_USER))+'</span><div class="cr-whotext"><b>'+esc(CURRENT_USER)+'</b><span class="cr-role">'+esc(role)+' · '+access+'</span></div><span class="spacer"></span><button class="btn ghost sm" id="btnLock">Sign out</button></div>';
   APP.innerHTML='<header class="dash-head"><div class="wrap"><div class="eyebrow">Control Room</div><h1 class="h-title">Roster Dashboard</h1>'
     +'<p class="h-sub">Manage characters and production status'+(admin?', plus analytics, the front page, team access and settings.':'.')+'</p></div></header>'
-    +'<main class="wrap">'+memBanner()+who+tabBar+'<div id="crContent"></div></main>';
+    +'<main class="wrap wide">'+memBanner()+who+tabBar+'<div id="crContent"></div></main>';
   el('btnLock').addEventListener('click',signOut);
   APP.querySelectorAll('[data-tab]').forEach(function(b){b.addEventListener('click',function(){setTab(b.getAttribute('data-tab'));});});
   showTab(dashTab);window.scrollTo(0,0);}
@@ -1658,6 +1766,10 @@ function renderSecurity(){var m=el('securityMount');if(!m)return;
     +'<div id="secRenameFlow"></div>'
     +strayBlock
     +'<div class="divider"></div>'
+    +'<div class="hint" style="margin:0 0 8px"><b>Broken images</b> — an upload that got interrupted, or a file that was deleted without clearing its record, leaves a broken picture behind. Scan checks that every image actually still loads, and lists anything that doesn’t.</div>'
+    +'<div class="sec-add"><button class="btn ghost sm" id="secScanImgs">Scan for broken images</button><span class="hint" id="secScanStatus" style="margin-left:8px"></span></div>'
+    +'<div id="secBrokenList"></div>'
+    +'<div class="divider"></div>'
     +'<div class="hint" style="margin:0 0 8px"><b>Admin password</b> (for Wilson / admin sign-in)</div>'
     +'<div class="sec-add"><input id="secAdminPw" type="password" placeholder="New admin password (min 4)"><button class="btn ghost sm" id="secAdminSave">Update admin password</button></div></div>';
   m.querySelectorAll('.stray-row').forEach(function(row,i){var s=strays[i];if(!s)return;var sel=row.querySelector('select'),btn=row.querySelector('button');
@@ -1669,7 +1781,59 @@ function renderSecurity(){var m=el('securityMount');if(!m)return;
   m.querySelectorAll('[data-rename]').forEach(function(b){b.addEventListener('click',function(){renameFlow(b.getAttribute('data-rename'));});});
   el('secAdd').addEventListener('click',function(){var v=el('secNewName').value.trim();if(!v)return;if(findUser(v)){toast('That name already exists');return;}USERS.push({name:v,role:el('secNewRole').value});saveUsers().then(function(){toast('User added');renderSecurity();renderUserWidget();});});
   el('secAdminSave').addEventListener('click',function(){var p=el('secAdminPw').value;if(p.length<4){toast('Use at least 4 characters');return;}
-    api('auth/set-password',{method:'POST',body:{newPassword:p}}).then(function(r){HAS_ADMIN_PW=true;if(r&&r.token)adminTokenSet(r.token);toast('Admin password updated');el('secAdminPw').value='';}).catch(function(){toast('Could not update password');});});}
+    api('auth/set-password',{method:'POST',body:{newPassword:p}}).then(function(r){HAS_ADMIN_PW=true;if(r&&r.token)adminTokenSet(r.token);toast('Admin password updated');el('secAdminPw').value='';}).catch(function(){toast('Could not update password');});});
+  el('secScanImgs').addEventListener('click',runBrokenImageScan);}
+// Which character or task a given image belongs to — image metadata only
+// carries a charId, so the readable name/kind has to be looked up from
+// whichever list actually has it (task images share the same charId slot
+// as character images — see allTaskLikeEntries).
+function imageOwnerLabel(charId){
+  var c=CHARS.find(function(x){return x.id===charId;});if(c)return{name:c.name,kind:'character',id:c.id};
+  var t=TASKS.find(function(x){return x.id===charId;});if(t)return{name:t.name,kind:'task',id:t.id};
+  return{name:'(no matching record)',kind:'',id:charId};}
+// Checks every image's actual file loads, not just that its metadata exists
+// (the same gap that caused the Excel/JSON export 502 and the "deleted but
+// still looks broken" bug — see export.js's comment and buildFullBackup).
+// Cancels each response body immediately after reading its status, so a
+// scan across hundreds of images doesn't actually download them all.
+function scanBrokenImages(onProgress){
+  var imgs=allImagesFlat(),total=imgs.length,done=0,broken=[],CONCURRENCY=8;
+  if(!total)return Promise.resolve([]);
+  if(onProgress)onProgress(0,total);
+  return new Promise(function(resolve){
+    var idx=0,active=0;
+    function pump(){
+      if(done>=total)return resolve(broken);
+      while(active<CONCURRENCY&&idx<total){(function(i){active++;idx++;var im=imgs[i];
+        fetch(im.data).then(function(r){
+          if(r.body&&r.body.cancel){try{r.body.cancel();}catch(e){}}
+          if(!r.ok)broken.push(im);
+        },function(){broken.push(im);})
+          .then(function(){active--;done++;if(onProgress)onProgress(done,total);pump();});
+      })(idx);}}
+    pump();});}
+function runBrokenImageScan(){var btn=el('secScanImgs'),status=el('secScanStatus');if(!btn)return;
+  btn.disabled=true;status.textContent='Scanning…';
+  scanBrokenImages(function(done,total){status.textContent='Scanning… '+done+' / '+total;})
+    .then(function(broken){btn.disabled=false;
+      status.textContent=broken.length?(broken.length+' broken image'+(broken.length>1?'s':'')+' found'):'All images load fine';
+      paintBrokenImages(broken);})
+    .catch(function(err){btn.disabled=false;status.textContent='Scan failed: '+(err&&err.message?err.message:err);});}
+function paintBrokenImages(list){var box=el('secBrokenList');if(!box)return;
+  if(!list||!list.length){box.innerHTML='';return;}
+  box.innerHTML='<table class="sec-table" style="margin-top:8px"><thead><tr><th>Record</th><th>Image</th><th>Uploaded by</th><th></th></tr></thead><tbody>'
+    +list.map(function(im){var o=imageOwnerLabel(im.charId);
+      return '<tr><td>'+esc(o.name)+(o.kind?' <span class="hint">('+o.kind+')</span>':'')+'</td><td>'+esc(im.name||im.id)+'</td><td>'+esc(im.by||'—')+'</td>'
+        +'<td style="text-align:right">'+(o.kind?'<button class="btn ghost xs" data-openrec="'+esc(o.id)+'" data-kind="'+o.kind+'">Open</button> ':'')
+        +'<button class="btn danger xs" data-rmbroken="'+esc(im.id)+'" title="Delete this leftover reference, not a real file">Remove record</button></td></tr>';}).join('')
+    +'</tbody></table>';
+  box.querySelectorAll('[data-openrec]').forEach(function(b){b.addEventListener('click',function(){
+    var id=b.getAttribute('data-openrec'),kind=b.getAttribute('data-kind');
+    dashTab=kind==='task'?'tasks':'roster';location.hash='#/dashboard';
+    setTimeout(function(){if(kind==='task'){if(el('taskEditorMount'))startEditTask(id);}else{if(el('editorMount'))startEdit(id);}},80);});});
+  box.querySelectorAll('[data-rmbroken]').forEach(function(b){b.addEventListener('click',function(){
+    if(!confirm('Remove this broken image’s leftover record? This only clears the reference — there’s no real file to lose.'))return;
+    delImg(b.getAttribute('data-rmbroken')).then(loadCaches).then(function(){toast('Removed');renderSecurity();}).catch(function(err){toast('Failed: '+(err&&err.message?err.message:err));});});});}
 function pwFlow(name){var box=el('secPwFlow');if(!box)return;box.innerHTML='<div class="sec-add" style="margin-top:10px"><input id="pfPw" type="password" placeholder="Password for '+esc(name)+' (min 4)"><button class="btn accent sm" id="pfGo">Save</button><button class="btn ghost sm" id="pfX">Cancel</button></div>';var f=el('pfPw');if(f)f.focus();
   el('pfGo').addEventListener('click',function(){var p=el('pfPw').value;if(p.length<4){toast('Use at least 4 characters');return;}var u=findUser(name);if(!u)return;var salt=randSalt();hashPw(p,salt).then(function(hh){u.salt=salt;u.hash=hh;return saveUsers();}).then(function(){toast('Password set for '+name);renderSecurity();renderUserWidget();});});
   el('pfX').addEventListener('click',function(){box.innerHTML='';});}
@@ -1832,12 +1996,16 @@ function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canS
       else b+='<button class="btn danger xs" data-tdel="'+t.id+'" title="Remove task" aria-label="Remove">✕</button>';
     }
     return b;}
-  var body=list.map(function(t){var img=primaryOf(t),n=(IMAGES[t.id]||[]).length,isChar=isCharEntry(t);
+  function rowHTML(t){var img=primaryOf(t),n=(IMAGES[t.id]||[]).length,isChar=isCharEntry(t);
     var assign=(modeledOf(t)||texturedOf(t))?' · <span class="assign">M:'+esc(modeledOf(t)||'–')+' · T:'+esc(texturedOf(t)||'–')+'</span>':'';
     var tag=isChar?'From '+esc(CLAN_META[t.clan]?CLAN_META[t.clan].name:t.clan)+' · ':(t.category?esc(t.category)+' · ':'Uncategorised · ');
     return '<div class="row'+(isDone(t)?' done':'')+'"><div class="rthumb">'+(img?'<img src="'+img.data+'">':esc(t.name.charAt(0)))+'</div>'
       +'<div class="rmain"><b>'+esc(t.name)+(isDone(t)?' <span class="done-chip sm">✓</span>':'')+revTag(t)+'</b><div class="rmeta">'+tag+esc(sprintName(t.sprint||1))+' · '+(n?n+' img':'no images')+assign+'</div></div>'
-      +statusPips(t)+'<div class="ract">'+acts(t)+'</div></div>';}).join('');
+      +statusPips(t)+'<div class="ract">'+acts(t)+'</div></div>';}
+  // Grouped by sprint, current sprint's group first, so what's active right
+  // now is never buried below older sprints — see groupBySprintOrdered.
+  var groups=groupBySprintOrdered(list);
+  var body=groups.map(function(g){return '<div class="sprint-group">'+sprintGroupHeader(g)+g.items.map(rowHTML).join('')+'</div>';}).join('');
   mount.innerHTML=body;
   mount.querySelectorAll('[data-tedit]').forEach(function(b){b.addEventListener('click',function(){
     var id=b.getAttribute('data-tedit');
@@ -1910,10 +2078,10 @@ function endSaveProgress(mount,btnId){setSaveProgress(mount,0,0);var btn=el(btnI
 
 /* ---------- task editor (mirrors the character editor, trimmed to task fields) ---------- */
 var taskEdit=null;
-function blankTask(){return{id:null,name:'',category:'',sprint:lastSprint(),images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',completed:false,review:{status:'',count:0,redos:0},history:[],createdAt:null};}
+function blankTask(){return{id:null,name:'',category:'',sprint:lastSprint(),images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',completed:false,review:{status:'',count:0,redos:0},history:[],createdAt:null,removedExistingIds:[]};}
 function startEditTask(id){if(!id&&!canEditChars())return;if(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
     taskEdit={id:t.id,name:t.name,category:t.category||'',sprint:t.sprint||firstSprint(),images:(IMAGES[t.id]||[]).map(function(im){return{id:im.id,name:im.name,data:im.data,by:im.by||null,ts:im.ts,existing:true};}),
-      primaryId:t.primaryImageId,status:Object.assign(defStatus(),t.status||{}),modeledBy:modeledOf(t),texturedBy:texturedOf(t),completed:isDone(t),history:(t.history||[]).slice(),createdAt:t.createdAt||null};
+      primaryId:t.primaryImageId,status:Object.assign(defStatus(),t.status||{}),modeledBy:modeledOf(t),texturedBy:texturedOf(t),completed:isDone(t),history:(t.history||[]).slice(),createdAt:t.createdAt||null,removedExistingIds:[]};
   }else taskEdit=blankTask();
   renderTaskEditor(taskEdit);var m=el('taskEditorMount');if(m)m.scrollIntoView({behavior:'smooth',block:'nearest'});}
 function renderTaskEditor(e){var mount=el('taskEditorMount');if(!mount)return;
@@ -1999,15 +2167,26 @@ function renderTaskStatusEditor(e,mount){var img=null;var t=TASKS.find(function(
     var ss=el('etSaveStatus');if(ss)ss.addEventListener('click',saveTaskStatusOnly);}
   bindReviewTask(mount);
   el('etCancel').addEventListener('click',function(){taskEdit=null;renderTaskEditor(null);});}
-function taskImageOps(id){var existing=(IMAGES[id]||[]).map(function(im){return im.id;}),keep=taskEdit.images.map(function(im){return im.id;}),ops=[];
-  existing.forEach(function(eid){if(keep.indexOf(eid)<0)ops.push(delImg(eid));});
-  taskEdit.images.forEach(function(im,idx){if(existing.indexOf(im.id)<0)ops.push(putImg({id:im.id,charId:id,name:im.name,data:im.data,ts:Date.now()+idx}));});
+// Deletes only images this editing session explicitly removed (tracked in
+// removedExistingIds the moment the × is clicked — see paintTaskThumbs),
+// never "whatever this client's local IMAGES snapshot doesn't list any more".
+// The latter used to be how this diffed (existing-on-this-client minus
+// currently-kept), which is exactly what would start deleting images a
+// *different* session added in the meantime once this app auto-refreshes
+// its data in the background (so a stale editor's local snapshot no longer
+// matches live state) — this keeps a save from ever touching an image this
+// session never actually asked to remove.
+function taskImageOps(id){var ops=[];
+  (taskEdit.removedExistingIds||[]).forEach(function(eid){ops.push(delImg(eid));});
+  taskEdit.images.forEach(function(im,idx){if(!im.existing)ops.push(putImg({id:im.id,charId:id,name:im.name,data:im.data,ts:Date.now()+idx}));});
   return ops;}
 function paintTaskThumbs(){var mount=el('timgThumbs');if(!mount)return;if(!taskEdit.images.length){mount.innerHTML='<div class="hint" style="grid-column:1/-1">No images yet.</div>';return;}
   mount.innerHTML=taskEdit.images.map(function(im,i){var isP=(taskEdit.primaryId?taskEdit.primaryId===im.id:i===0);
     var cap=im.by?('<div class="thumb-cap">'+esc(im.by)+(im.ts?' · '+fmtTS(im.ts):'')+'</div>'):'';
     return '<div class="thumb-card"><div class="thumb-item'+(isP?' primary':'')+'"><img src="'+im.data+'"><button class="rm" data-trm="'+i+'">×</button><button class="star" data-tstar="'+i+'">★</button></div>'+cap+'</div>';}).join('');
-  mount.querySelectorAll('[data-trm]').forEach(function(b){b.addEventListener('click',function(){var i=+b.getAttribute('data-trm'),rm=taskEdit.images.splice(i,1)[0];if(rm&&taskEdit.primaryId===rm.id)taskEdit.primaryId=taskEdit.images.length?taskEdit.images[0].id:null;paintTaskThumbs();});});
+  mount.querySelectorAll('[data-trm]').forEach(function(b){b.addEventListener('click',function(){var i=+b.getAttribute('data-trm'),rm=taskEdit.images.splice(i,1)[0];
+    if(rm&&rm.existing){taskEdit.removedExistingIds=taskEdit.removedExistingIds||[];taskEdit.removedExistingIds.push(rm.id);}
+    if(rm&&taskEdit.primaryId===rm.id)taskEdit.primaryId=taskEdit.images.length?taskEdit.images[0].id:null;paintTaskThumbs();});});
   mount.querySelectorAll('[data-tstar]').forEach(function(b){b.addEventListener('click',function(){taskEdit.primaryId=taskEdit.images[+b.getAttribute('data-tstar')].id;paintTaskThumbs();});});}
 function addTaskFiles(files){if(!taskEdit)return;var arr=Array.prototype.slice.call(files).filter(function(f){return /^image\//.test(f.type);});if(!arr.length)return;
   Promise.all(arr.map(function(f){return resizeImage(f).then(function(d){if(taskEdit)taskEdit.images.push({id:uid(),name:f.name,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false});});})).then(function(){if(!taskEdit)return;if(!taskEdit.primaryId&&taskEdit.images.length)taskEdit.primaryId=taskEdit.images[0].id;paintTaskThumbs();});}
@@ -2242,12 +2421,12 @@ function showGuide(){var back=h('<div class="modal-back"></div>');
 
 /* ---------- editor ---------- */
 var edit=null;
-function blankChar(){return{id:null,clan:'aranyani',num:'',name:'',mana:0,arch:'Support',type:'Magic',tier:'Basic',sprint:firstSprint(),gender:'',height:'',l1:'',l6:'',l12:'',abilities:[],images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',weaponName:'',weaponImage:null,completed:false,review:{status:'',count:0,redos:0},history:[]};}
+function blankChar(){return{id:null,clan:'aranyani',num:'',name:'',mana:0,arch:'Support',type:'Magic',tier:'Basic',sprint:firstSprint(),gender:'',height:'',l1:'',l6:'',l12:'',abilities:[],images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',weaponName:'',weaponImage:null,completed:false,review:{status:'',count:0,redos:0},history:[],removedExistingIds:[],removedWeaponId:null};}
 function weaponEditOf(id){var w=weaponImageOf(id);return w?{id:w.id,name:w.name,data:w.data,by:w.by||null,ts:w.ts,existing:true}:null;}
 function startEdit(id){if(!id&&!canEditChars())return;if(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
     edit={id:c.id,clan:c.clan,num:c.num,name:c.name,mana:c.mana,arch:c.arch,type:c.type,tier:c.tier,sprint:c.sprint||1,gender:c.gender||'',height:c.height||'',l1:c.l1,l6:c.l6,l12:c.l12,
       abilities:c.abilities.slice(),images:galleryImages(c.id).map(function(im){return{id:im.id,name:im.name,data:im.data,by:im.by||null,ts:im.ts,existing:true};}),
-      primaryId:c.primaryImageId,status:Object.assign(defStatus(),c.status||{}),modeledBy:modeledOf(c),texturedBy:texturedOf(c),weaponName:c.weaponName||'',weaponImage:weaponEditOf(c.id),completed:isDone(c),history:(c.history||[]).slice()};
+      primaryId:c.primaryImageId,status:Object.assign(defStatus(),c.status||{}),modeledBy:modeledOf(c),texturedBy:texturedOf(c),weaponName:c.weaponName||'',weaponImage:weaponEditOf(c.id),completed:isDone(c),history:(c.history||[]).slice(),removedExistingIds:[],removedWeaponId:null};
   }else edit=blankChar();
   renderEditor(edit);el('editorMount').scrollIntoView({behavior:'smooth',block:'nearest'});}
 function userOpts(val){return '<option value="">\u2014 unassigned \u2014</option>'+USERS.map(function(u){return '<option'+(val===u.name?' selected':'')+'>'+esc(u.name)+'</option>';}).join('');}
@@ -2348,22 +2527,38 @@ function renderStatusEditor(e,mount){var m=CLAN_META[e.clan];var img=null;var c=
     var ss=el('edSaveStatus');if(ss)ss.addEventListener('click',saveStatusOnly);}
   bindReview(mount);
   el('edCancel').addEventListener('click',function(){edit=null;renderEditor(null);});}
-function imageOps(id){var existing=galleryImages(id).map(function(im){return im.id;}),keep=edit.images.map(function(im){return im.id;}),ops=[];
-  existing.forEach(function(eid){if(keep.indexOf(eid)<0)ops.push(delImg(eid));});
-  edit.images.forEach(function(im,idx){if(existing.indexOf(im.id)<0)ops.push(putImg({id:im.id,charId:id,name:im.name,data:im.data,ts:Date.now()+idx}));});
+// Deletes only images this editing session explicitly removed (tracked in
+// removedExistingIds the moment the × is clicked — see paintThumbs), never
+// "whatever this client's local gallery snapshot doesn't list any more".
+// The latter used to be how this diffed (existing-on-this-client minus
+// currently-kept), which is exactly what would start deleting images a
+// *different* session added in the meantime once this app auto-refreshes its
+// data in the background (so a stale editor's local snapshot no longer
+// matches live state) — this keeps a save from ever touching an image this
+// session never actually asked to remove.
+function imageOps(id){var ops=[];
+  (edit.removedExistingIds||[]).forEach(function(eid){ops.push(delImg(eid));});
+  edit.images.forEach(function(im,idx){if(!im.existing)ops.push(putImg({id:im.id,charId:id,name:im.name,data:im.data,ts:Date.now()+idx}));});
   return ops;}
 // The weapon slot is a single image kept out of imageOps' gallery diff above
 // (see galleryImages) so saving the gallery never touches it, and vice versa.
-function weaponImageOps(id){var existing=weaponImageOf(id),w=edit.weaponImage,ops=[];
-  if(existing&&(!w||w.id!==existing.id))ops.push(delImg(existing.id));
-  if(w&&(!existing||existing.id!==w.id))ops.push(putImg({id:w.id,charId:id,name:w.name,data:w.data,kind:'weapon',ts:Date.now()}));
+// Same removed-id tracking as imageOps, via removedWeaponId.
+function weaponImageOps(id){var ops=[],w=edit.weaponImage;
+  if(edit.removedWeaponId)ops.push(delImg(edit.removedWeaponId));
+  if(w&&!w.existing)ops.push(putImg({id:w.id,charId:id,name:w.name,data:w.data,kind:'weapon',ts:Date.now()}));
   return ops;}
 function weaponThumbHTML(){if(!edit.weaponImage)return '<div class="hint" style="grid-column:1/-1">No weapon image yet.</div>';var w=edit.weaponImage;
   var cap=w.by?('<div class="thumb-cap">'+esc(w.by)+(w.ts?' · '+fmtTS(w.ts):'')+'</div>'):'';
   return '<div class="thumb-card"><div class="thumb-item primary"><img src="'+w.data+'"><button class="rm" data-wrm="1">×</button></div>'+cap+'</div>';}
 function paintWeaponThumb(){var mount=el('weaponThumb');if(!mount)return;mount.innerHTML=weaponThumbHTML();
-  var rm=mount.querySelector('[data-wrm]');if(rm)rm.addEventListener('click',function(){edit.weaponImage=null;paintWeaponThumb();});}
+  var rm=mount.querySelector('[data-wrm]');if(rm)rm.addEventListener('click',function(){
+    if(edit.weaponImage&&edit.weaponImage.existing)edit.removedWeaponId=edit.weaponImage.id;
+    edit.weaponImage=null;paintWeaponThumb();});}
 function addWeaponFile(files){if(!edit)return;var arr=Array.prototype.slice.call(files).filter(function(f){return /^image\//.test(f.type);});if(!arr.length)return;
+  // Dropping a new weapon image directly replaces the slot without the user
+  // explicitly clicking the old one's × first — still queue the old existing
+  // image for deletion so it doesn't become an orphaned, unreferenced blob.
+  if(edit.weaponImage&&edit.weaponImage.existing)edit.removedWeaponId=edit.weaponImage.id;
   resizeImage(arr[0]).then(function(d){if(!edit)return;edit.weaponImage={id:uid(),name:arr[0].name,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false};paintWeaponThumb();});}
 /* ---------- change history (who updated what) ---------- */
 function pushHistory(c,note){if(!note)return;c.history=(c.history||[]).slice();c.history.unshift({ts:Date.now(),user:CURRENT_USER||'Unknown',action:note});if(c.history.length>40)c.history.length=40;}
@@ -2426,7 +2621,9 @@ function paintThumbs(){var mount=el('imgThumbs');if(!mount)return;if(!edit.image
   mount.innerHTML=edit.images.map(function(im,i){var isP=(edit.primaryId?edit.primaryId===im.id:i===0);
     var cap=im.by?('<div class="thumb-cap">'+esc(im.by)+(im.ts?' \u00b7 '+fmtTS(im.ts):'')+'</div>'):'';
     return '<div class="thumb-card"><div class="thumb-item'+(isP?' primary':'')+'"><img src="'+im.data+'"><button class="rm" data-rm="'+i+'">\u00d7</button><button class="star" data-star="'+i+'">\u2605</button></div>'+cap+'</div>';}).join('');
-  mount.querySelectorAll('[data-rm]').forEach(function(b){b.addEventListener('click',function(){var i=+b.getAttribute('data-rm'),rm=edit.images.splice(i,1)[0];if(rm&&edit.primaryId===rm.id)edit.primaryId=edit.images.length?edit.images[0].id:null;paintThumbs();});});
+  mount.querySelectorAll('[data-rm]').forEach(function(b){b.addEventListener('click',function(){var i=+b.getAttribute('data-rm'),rm=edit.images.splice(i,1)[0];
+    if(rm&&rm.existing){edit.removedExistingIds=edit.removedExistingIds||[];edit.removedExistingIds.push(rm.id);}
+    if(rm&&edit.primaryId===rm.id)edit.primaryId=edit.images.length?edit.images[0].id:null;paintThumbs();});});
   mount.querySelectorAll('[data-star]').forEach(function(b){b.addEventListener('click',function(){edit.primaryId=edit.images[+b.getAttribute('data-star')].id;paintThumbs();});});}
 function addFiles(files){if(!edit)return;var arr=Array.prototype.slice.call(files).filter(function(f){return /^image\//.test(f.type);});if(!arr.length)return;
   Promise.all(arr.map(function(f){return resizeImage(f).then(function(d){if(edit)edit.images.push({id:uid(),name:f.name,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false});});})).then(function(){if(!edit)return;if(!edit.primaryId&&edit.images.length)edit.primaryId=edit.images[0].id;paintThumbs();});}
@@ -2647,7 +2844,10 @@ function boot(){APP=el('app');
       Object.keys(cl.meta).forEach(function(k){CLAN_META[k]=cl.meta[k];});
       CLAN_ORDER.length=0;cl.order.forEach(function(id){if(CLAN_META[id])CLAN_ORDER.push(id);});}
     return getSetting('homeText');}).then(function(ht){if(ht){for(var k in ht)HOME_TEXT[k]=ht[k];}
-    window.addEventListener('hashchange',route);route();
+    window.addEventListener('hashchange',route);
+    try{route();}catch(e){console.error('route() failed on initial load',e);}
+    try{startLiveRefresh();}catch(e){console.error('startLiveRefresh() failed to start',e);}
+    try{initGlobalSearch();}catch(e){console.error('initGlobalSearch() failed to init',e);}
   }).catch(function(err){APP.innerHTML='<div class="wrap" style="padding:60px 0"><h1 class="h-title">Something went wrong</h1><p class="h-sub">'+esc(err&&err.message||err)+'</p></div>';});}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
 })();
