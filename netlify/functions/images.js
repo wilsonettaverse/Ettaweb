@@ -12,6 +12,22 @@ exports.handler = async (event) => {
     } catch (e) {
       return json(400, { error: 'Bad JSON' });
     }
+
+    // Metadata-only flip: retires an existing image into history (archived:
+    // true) or brings one back as current (archived:false), without
+    // touching its stored bytes. Used for the weapon-image slot's version
+    // history — replacing or restoring a version never deletes the old one
+    // outright any more, it's just archived/unarchived in place.
+    if (body.archiveId && !(body.dataUrl || body.data)) {
+      const metaArr = await getImagesMeta();
+      const i = metaArr.findIndex(function (x) { return x.id === body.archiveId; });
+      if (i < 0) return json(404, { error: 'Image not found' });
+      metaArr[i] = Object.assign({}, metaArr[i], { archived: !!body.archived });
+      await setImagesMeta(metaArr);
+      const m = metaArr[i];
+      return json(200, { id: m.id, charId: m.charId, name: m.name, ts: m.ts, by: m.by || null, kind: m.kind || '', archived: !!m.archived, data: '/api/image?id=' + encodeURIComponent(m.id) });
+    }
+
     const dataUrl = body.dataUrl || body.data;
     if (!dataUrl || !body.charId) return json(400, { error: 'Missing dataUrl or charId' });
     const parsed = parseDataUrl(dataUrl);
