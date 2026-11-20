@@ -242,6 +242,26 @@ img{max-width:100%; display:block}
 .row .rmeta{font-family:var(--mono); font-size:10.5px; color:var(--bark)}
 .row .clan-dot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle}
 .row .ract{display:flex; gap:6px}
+.row[data-trow]{cursor:pointer}
+.row[data-trow]:hover{border-color:var(--line-2); background:var(--surface-2)}
+.row .rchev{font-family:var(--mono); font-size:10px; font-weight:400; color:var(--bark); text-transform:lowercase; letter-spacing:.02em}
+/* Collapsed tasks — just the image, nothing else, until clicked. */
+.task-tiles{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px}
+.task-tile{width:64px; height:64px; padding:0; border-radius:10px; overflow:hidden; background:var(--surface-3);
+  border:1px solid var(--line-2); cursor:pointer; display:flex; align-items:center; justify-content:center;
+  font-family:var(--mono); font-size:9px; color:var(--bark); position:relative}
+.task-tile img{width:100%; height:100%; object-fit:cover}
+.task-tile:hover{border-color:var(--accent)}
+.task-tile.done{border-color:var(--done)}
+.task-tile.done:not(.expanded)::after{content:"\2713"; position:absolute; top:3px; right:3px; width:15px; height:15px; border-radius:50%;
+  background:var(--done); color:#0f111a; font-size:9px; font-weight:700; display:flex; align-items:center; justify-content:center}
+/* Higher specificity than both .task-tile and .row (which disagree on
+   display/padding/etc) so the expanded tile reliably renders as the
+   original detail row regardless of which rule the cascade would
+   otherwise prefer by source order. */
+.task-tile.expanded{width:100%; height:auto; cursor:default; display:grid; grid-template-columns:46px 1fr auto;
+  gap:12px; align-items:center; background:var(--surface); border:1px solid var(--line-2); border-radius:12px; padding:9px 12px}
+.row.expanded .rmeta{margin-top:3px}
 
 /* editor panel (sticky) */
 .editor{position:sticky; top:74px; background:var(--surface); border:1px solid var(--line-2); border-radius:16px;
@@ -958,6 +978,12 @@ var SPRINT_DEFS=DEFAULT_SPRINTS.slice();
 function sprintNums(){return SPRINT_DEFS.map(function(s){return s.n;});}
 function sprintName(n){for(var i=0;i<SPRINT_DEFS.length;i++)if(SPRINT_DEFS[i].n===n)return SPRINT_DEFS[i].name;return 'Sprint '+n;}
 function sprintDef(n){for(var i=0;i<SPRINT_DEFS.length;i++)if(SPRINT_DEFS[i].n===n)return SPRINT_DEFS[i];return null;}
+// SPRINT_DEFS itself always stays oldest-first (new sprints are pushed with
+// n = max+1 — see renderSprints) because firstSprint/lastSprint/
+// currentSprintNum below all depend on that exact order. Every sprint
+// dropdown/chip list a person actually picks from uses THIS instead, so the
+// newest sprint shows up first without touching that internal ordering.
+function sprintsNewestFirst(){return SPRINT_DEFS.slice().sort(function(a,b){return b.n-a.n;});}
 function fmtD(d){if(!d)return '';var p=String(d).split('-');return p.length===3?(p[2]+'/'+p[1]+'/'+p[0].slice(2)):d;}
 var MONTHS_SHORT=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function fmtTS(ts){if(!ts)return '';var d=new Date(ts);var h=d.getHours(),m=d.getMinutes(),ap=h>=12?'PM':'AM',h12=h%12||12;
@@ -1015,12 +1041,36 @@ function setArtistGoal(sprintN,artist,val){
   if(val==null||val===''||isNaN(val)){if(ARTIST_GOALS[sprintN]){delete ARTIST_GOALS[sprintN][artist];if(!Object.keys(ARTIST_GOALS[sprintN]).length)delete ARTIST_GOALS[sprintN];}}
   else{ARTIST_GOALS[sprintN]=ARTIST_GOALS[sprintN]||{};ARTIST_GOALS[sprintN][artist]=Number(val);}
   return saveArtistGoals();}
+// "Completed" is always counted in whole units (a character or task is
+// either done or it isn't), but the 3.5-per-sprint goal means a perfect
+// score can land on a half unit no auto-count can ever produce — e.g. 3
+// full characters plus a task that's genuinely half finished. Rather than
+// warp the done-counting logic to manufacture halves, admin can manually
+// override the counted "done" number for one artist + sprint, the same way
+// goals are overridden above; the score formula itself never changes.
+var ARTIST_DONE_OVERRIDES={};
+function doneOverrideFor(sprintN,artist){var row=ARTIST_DONE_OVERRIDES[sprintN];return row?row[artist]:null;}
+function saveArtistDoneOverrides(){return setSetting('artistDoneOverrides',ARTIST_DONE_OVERRIDES);}
+function setArtistDone(sprintN,artist,val){
+  if(val==null||val===''||isNaN(val)){if(ARTIST_DONE_OVERRIDES[sprintN]){delete ARTIST_DONE_OVERRIDES[sprintN][artist];if(!Object.keys(ARTIST_DONE_OVERRIDES[sprintN]).length)delete ARTIST_DONE_OVERRIDES[sprintN];}}
+  else{ARTIST_DONE_OVERRIDES[sprintN]=ARTIST_DONE_OVERRIDES[sprintN]||{};ARTIST_DONE_OVERRIDES[sprintN][artist]=Number(val);}
+  return saveArtistDoneOverrides();}
+// Counts BOTH clan characters and Tasks-board items (environment art, misc
+// jobs) credited to an artist in a sprint — a character finished through
+// the Tasks board counts toward the same sprint score as one finished
+// through the clan roster. allTaskLikeEntries() isn't used here because it
+// would double-count a pinned character (it's already in CHARS); TASKS
+// itself never contains characters, so concatenating the two is exactly
+// "every completable thing, once each."
 function artistScoresFor(sprintN){var counts={};userNames().forEach(function(n){counts[n]=0;});
-  CHARS.forEach(function(c){if((c.sprint||0)!==sprintN||!isDone(c))return;
+  CHARS.concat(TASKS).forEach(function(c){if((c.sprint||0)!==sprintN||!isDone(c))return;
     var credited={};var mb=modeledOf(c),tb=texturedOf(c);if(mb)credited[mb]=1;if(tb)credited[tb]=1;
     Object.keys(credited).forEach(function(n){counts[n]=(counts[n]||0)+1;});});
-  return Object.keys(counts).sort().map(function(n){var done=counts[n],goal=goalFor(sprintN,n);
-    return{name:n,done:done,goal:goal,score:goal>0?Math.round(done/goal*100):0,overridden:!!(ARTIST_GOALS[sprintN]&&ARTIST_GOALS[sprintN][n]!=null)};});}
+  return Object.keys(counts).sort().map(function(n){var autoDone=counts[n],goal=goalFor(sprintN,n);
+    var override=doneOverrideFor(sprintN,n),done=(override!=null&&override!=='')?Number(override):autoDone;
+    return{name:n,done:done,autoDone:autoDone,goal:goal,score:goal>0?Math.round(done/goal*100):0,
+      overridden:!!(ARTIST_GOALS[sprintN]&&ARTIST_GOALS[sprintN][n]!=null),
+      doneOverridden:override!=null&&override!==''};});}
 var STAGES=[
   {key:'approved',label:'Image approved by Joseph',ab:'Approved'},
   {key:'modeling',label:'Image sent for modeling',ab:'Modeling'},
@@ -1149,12 +1199,49 @@ function api(path,opts){opts=opts||{};var headers=opts.headers||{};var tk=curren
 function refreshRemote(){return api('bootstrap').then(function(d){MEM=false;REMOTE.characters=d.characters||[];REMOTE.tasks=d.tasks||[];REMOTE.images=d.images||[];REMOTE.settings=d.settings||{};});}
 function openDB(){return refreshRemote().catch(function(e){MEM=true;toast('Could not reach the server — check your connection');throw e;});}
 function upsertLocal(store,row){var arr=REMOTE[store];var i=arr.findIndex(function(x){return x.id===row.id;});if(i>=0)arr[i]=row;else arr.push(row);}
+// See mergeFreshList below: a background poll that lands inside Netlify
+// Blobs' read-after-write propagation window can still list something this
+// tab just deleted. Remembering the id briefly lets that merge drop the
+// stale ghost instead of resurrecting it on screen for a few seconds.
+var RECENTLY_DELETED={};
+function markDeleted(id){RECENTLY_DELETED[id]=Date.now();}
 function putChar(c){return api('characters',{method:'POST',body:c}).then(function(saved){upsertLocal('characters',saved);return saved;});}
-function delChar(id){return api('characters?id='+encodeURIComponent(id),{method:'DELETE'}).then(function(){REMOTE.characters=REMOTE.characters.filter(function(x){return x.id!==id;});});}
+function delChar(id){return api('characters?id='+encodeURIComponent(id),{method:'DELETE'}).then(function(){markDeleted(id);REMOTE.characters=REMOTE.characters.filter(function(x){return x.id!==id;});});}
 function putTask(t){return api('tasks',{method:'POST',body:t}).then(function(saved){upsertLocal('tasks',saved);return saved;});}
-function delTask(id){return api('tasks?id='+encodeURIComponent(id),{method:'DELETE'}).then(function(){REMOTE.tasks=REMOTE.tasks.filter(function(x){return x.id!==id;});});}
+function delTask(id){return api('tasks?id='+encodeURIComponent(id),{method:'DELETE'}).then(function(){markDeleted(id);REMOTE.tasks=REMOTE.tasks.filter(function(x){return x.id!==id;});});}
 function putImg(im){return api('images',{method:'POST',body:im}).then(function(saved){upsertLocal('images',saved);return saved;});}
-function delImg(id){return api('images?id='+encodeURIComponent(id),{method:'DELETE'}).then(function(){REMOTE.images=REMOTE.images.filter(function(x){return x.id!==id;});});}
+function delImg(id){return api('images?id='+encodeURIComponent(id),{method:'DELETE'}).then(function(){markDeleted(id);REMOTE.images=REMOTE.images.filter(function(x){return x.id!==id;});});}
+// Reconciles a background poll's fresh fetch against whatever is already in
+// memory for the same store, record by record, instead of trusting the
+// fetch wholesale. Netlify Blobs only guarantees *eventual* read-after-write
+// consistency (see _lib.js's dataStore() comment) — a poll firing within
+// that brief propagation window after a save (by this tab or a teammate's)
+// can come back with the pre-save copy, and overwriting memory with it was
+// exactly what made a just-renamed character or just-edited task appear to
+// revert for a few seconds before the next poll finally caught up. Keeping
+// whichever side's tsKey (updatedAt for characters/tasks, ts for images) is
+// actually newer fixes that without ever discarding a genuinely newer
+// remote edit (a teammate's save still wins over our own stale copy).
+function mergeFreshList(oldArr,freshArr,tsKey){
+  var now=Date.now();
+  Object.keys(RECENTLY_DELETED).forEach(function(id){if(now-RECENTLY_DELETED[id]>30000)delete RECENTLY_DELETED[id];});
+  var oldById={};(oldArr||[]).forEach(function(x){oldById[x.id]=x;});
+  var freshIds={};
+  var merged=(freshArr||[]).filter(function(f){return !RECENTLY_DELETED[f.id];}).map(function(f){
+    freshIds[f.id]=true;
+    var o=oldById[f.id];
+    if(!o)return f;
+    return (Number(o[tsKey]||0)>Number(f[tsKey]||0))?o:f;
+  });
+  // A record saved moments before this poll went out (e.g. the very first
+  // poll after creating it) can be missing from a fetch that hasn't
+  // propagated it yet — keep it for a short grace window rather than let it
+  // flicker away, but a real delete (markDeleted, above) still wins.
+  (oldArr||[]).forEach(function(o){
+    if(!freshIds[o.id]&&!RECENTLY_DELETED[o.id]&&(now-Number(o[tsKey]||0))<20000)merged.push(o);
+  });
+  return merged;
+}
 // Metadata-only flip (no new bytes) — used to retire a superseded weapon
 // image into history (archived:true) or bring one back as current
 // (archived:false) without ever touching its stored bytes.
@@ -1199,7 +1286,20 @@ function repaintLive(){
 function liveRefreshTick(){
   if(document.hidden||liveRefreshing)return;
   liveRefreshing=true;
-  refreshRemote().then(loadCaches).then(function(){liveRefreshing=false;repaintLive();})
+  var preChars=REMOTE.characters,preTasks=REMOTE.tasks,preImages=REMOTE.images;
+  refreshRemote().then(function(){
+    // Reconcile instead of trusting this poll's fetch outright — see
+    // mergeFreshList's comment for why a blind overwrite here was the root
+    // cause of edits intermittently appearing to revert.
+    REMOTE.characters=mergeFreshList(preChars,REMOTE.characters,'updatedAt');
+    REMOTE.tasks=mergeFreshList(preTasks,REMOTE.tasks,'updatedAt');
+    REMOTE.images=mergeFreshList(preImages,REMOTE.images,'ts');
+  }).then(loadCaches).then(function(){liveRefreshing=false;
+    // The admin can switch the site theme while someone else already has the
+    // page open; pick that up on the next poll rather than waiting for them
+    // to reload, same as everything else this tick refreshes.
+    var th=REMOTE.settings.siteTheme||'';if(th!==CURRENT_SITE_THEME)applySiteTheme(th);
+    repaintLive();})
     .catch(function(){liveRefreshing=false;}); // transient network hiccup — just try again next tick, no toast spam
 }
 function startLiveRefresh(){if(liveRefreshTimer)return;liveRefreshTimer=setInterval(liveRefreshTick,LIVE_POLL_MS);
@@ -1366,6 +1466,30 @@ var DARKVARS=['--parchment','--surface','--surface-2','--surface-3','--ink','--i
 function resetTheme(){var s=document.documentElement.style;s.removeProperty('--accent');s.removeProperty('--glow');DARKVARS.forEach(function(v){s.removeProperty(v);});document.body.classList.remove('theme-dark');document.body.classList.remove('on-clan');}
 function applyClanTheme(m){var s=document.documentElement.style;resetTheme();s.setProperty('--accent',m.accent);s.setProperty('--glow',m.glow);document.body.classList.add('on-clan');}
 
+/* ---------- site-wide theme presets (admin-chosen, everyone sees it) ----------
+   These set the SAME variables the per-clan accent override uses (--accent/
+   --glow) plus the dark-palette variables in DARKVARS above. A clan page's
+   inline style.setProperty always wins over a stylesheet rule regardless of
+   source order, so applyClanTheme's accent/glow still overrides these on a
+   clan page, and resetTheme() removing that inline override (e.g. leaving a
+   clan page) correctly falls back to whichever site theme is active — never
+   to the old hardcoded colours — because this writes a real <style> rule,
+   not an inline style on documentElement, so resetTheme() never touches it. */
+var SITE_THEMES={
+  midnight:{label:'Midnight (default)',vars:{'--ink':'#eef0f6','--ink-2':'#a8b0c2','--bark':'#737c92','--parchment':'#0f111a','--surface':'#181b26','--surface-2':'#1f2331','--surface-3':'#282d3d','--line':'#2d3346','--line-2':'#404a64','--accent':'#6ea6ff','--glow':'#9cc2ff'}},
+  dusk:{label:'Dusk Violet',vars:{'--ink':'#f1edf7','--ink-2':'#b8aed0','--bark':'#8678a3','--parchment':'#140f1f','--surface':'#201a30','--surface-2':'#2a2240','--surface-3':'#352b50','--line':'#3a2f55','--line-2':'#544572','--accent':'#b48cff','--glow':'#d6bbff'}},
+  forest:{label:'Deep Forest',vars:{'--ink':'#eaf3ec','--ink-2':'#a7c2ad','--bark':'#6f8f77','--parchment':'#0c1711','--surface':'#132018','--surface-2':'#192b20','--surface-3':'#20362a','--line':'#223b2b','--line-2':'#345540','--accent':'#5fcf8a','--glow':'#96e6b8'}},
+  sunset:{label:'Sunset Ember',vars:{'--ink':'#fbeee6','--ink-2':'#d6ab98','--bark':'#a97a63','--parchment':'#1a110d','--surface':'#241712','--surface-2':'#2e1d16','--surface-3':'#3a251b','--line':'#3d2419','--line-2':'#5c3624','--accent':'#ff8f5c','--glow':'#ffc08f'}},
+  ocean:{label:'Ocean Deep',vars:{'--ink':'#e8f3f6','--ink-2':'#9fc3cc','--bark':'#5e8d99','--parchment':'#081417','--surface':'#0d2025','--surface-2':'#112a30','--surface-3':'#16363d','--line':'#163a41','--line-2':'#20525c','--accent':'#4fd1d9','--glow':'#8ff0f5'}}
+};
+var CURRENT_SITE_THEME='';
+function siteThemeCss(id){var t=SITE_THEMES[id];if(!t)return '';var out=':root{';Object.keys(t.vars).forEach(function(k){out+=k+':'+t.vars[k]+';';});return out+'}';}
+function applySiteTheme(id){id=(id&&SITE_THEMES[id])?id:'';CURRENT_SITE_THEME=id;
+  var s=document.getElementById('site-theme-vars');if(!s){s=document.createElement('style');s.id='site-theme-vars';document.head.appendChild(s);}
+  s.textContent=id?siteThemeCss(id):'';
+  var mc=document.querySelector('meta[name="theme-color"]');if(mc)mc.setAttribute('content',(id&&SITE_THEMES[id].vars['--parchment'])?SITE_THEMES[id].vars['--parchment']:'#0f111a');}
+function saveSiteTheme(id){return setSetting('siteTheme',id).then(function(){applySiteTheme(id);});}
+
 /* ============================================================ PARTICLES (simple, calm) */
 function simpleCfg(c1,c2){return {colors:[c1,c2],mesh:false,dir:'drift',
   count:46,size:[1.4,3.2],alpha:[.32,.62],vx:[-.11,.11],vy:[-.11,.11],sway:[.05,.14],shape:'circle',glow:true};}
@@ -1467,16 +1591,15 @@ function renderHome(){resetTheme();
   window.scrollTo(0,0);}
 
 /* ============================================================ CLAN VIEW */
-var clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',animated:'',clan:''};
+var clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',animated:false,hasImages:false,clan:''};
 function renderClan(clanId){var m=CLAN_META[clanId];if(!m){location.hash='#/';return;}applyClanTheme(m);
-  clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',animated:'',clan:clanId};
+  clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',animated:false,hasImages:false,clan:clanId};
   var switcher=CLAN_ORDER.map(function(id){return '<a href="#/clan/'+id+'" class="'+(id===clanId?'active':'')+'">'+esc(CLAN_META[id].name)+'</a>';}).join('');
-  var sprintOpts='<option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('');
   var archChips=ARCHES.map(function(a){return '<button class="chip" data-arch="'+a+'" aria-pressed="false">'+a+'</button>';}).join('');
   var typeChips=TYPES.map(function(t){return '<button class="chip" data-type="'+t+'" aria-pressed="false">'+t+'</button>';}).join('');
   var modelerOpts='<option value="">All modelers</option>'+artistNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
   var texturerOpts='<option value="">All texturers</option>'+artistNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
-  var animatedOpts='<option value="">Animated \u2014 all</option><option value="1">Animated</option><option value="0">Not animated</option>';
   APP.innerHTML='<header class="clan-hero"><div class="wrap wide clan-hero-in">'
     +'<div class="clan-hero-text"><div class="el">'+esc(m.element)+' Clan</div><h1>'+esc(m.name)+'</h1><p>'+esc(m.tag)+'</p></div>'
     +'<div class="clan-glyph">'+clanGlyph(clanId)+'</div></div></header>'
@@ -1486,14 +1609,16 @@ function renderClan(clanId){var m=CLAN_META[clanId];if(!m){location.hash='#/';re
     +'<label class="filt"><span>Sprint</span><select id="clanSprint" class="filt-sel">'+sprintOpts+'</select></label>'
     +'<label class="filt"><span>Modeler</span><select id="clanModeler" class="filt-sel">'+modelerOpts+'</select></label>'
     +'<label class="filt"><span>Texturer</span><select id="clanTexturer" class="filt-sel">'+texturerOpts+'</select></label>'
-    +'<label class="filt"><span>Animated</span><select id="clanAnimated" class="filt-sel">'+animatedOpts+'</select></label></div>'
+    +'<button class="chip" id="clanAnimated" aria-pressed="false" title="Show only units marked Animated">🎬 Animated</button>'
+    +'<button class="chip" id="clanHasImg" aria-pressed="false" title="Show only units with at least one concept image">🖼 Only with images</button></div>'
     +'<div class="filters" style="padding-top:0"><div class="chipset">'+archChips+'</div><div class="chipset">'+typeChips+'</div></div>'
     +'<div class="count-note" id="clanCount"></div><div id="clanBody"></div></main>'+footer();
   el('clanSearch').addEventListener('input',function(){clanState.search=this.value.toLowerCase();paintClan();});
   el('clanSprint').addEventListener('change',function(){clanState.sprint=this.value;paintClan();});
   el('clanModeler').addEventListener('change',function(){clanState.modeler=this.value;paintClan();});
   el('clanTexturer').addEventListener('change',function(){clanState.texturer=this.value;paintClan();});
-  el('clanAnimated').addEventListener('change',function(){clanState.animated=this.value;paintClan();});
+  el('clanAnimated').addEventListener('click',function(){clanState.animated=!clanState.animated;this.setAttribute('aria-pressed',String(clanState.animated));paintClan();});
+  el('clanHasImg').addEventListener('click',function(){clanState.hasImages=!clanState.hasImages;this.setAttribute('aria-pressed',String(clanState.hasImages));paintClan();});
   bindChips('[data-arch]','arch');bindChips('[data-type]','type');
   paintClan();startParticles('.clan-hero',PARTICLE_CFG[clanId]);window.scrollTo(0,0);}
 function bindChips(sel,key,map){APP.querySelectorAll(sel).forEach(function(b){b.addEventListener('click',function(){
@@ -1503,7 +1628,8 @@ function matchClan(c){if(clanState.arch&&c.arch!==clanState.arch)return false;if
   if(clanState.sprint&&String(c.sprint)!==String(clanState.sprint))return false;
   if(clanState.modeler&&modeledOf(c)!==clanState.modeler)return false;
   if(clanState.texturer&&texturedOf(c)!==clanState.texturer)return false;
-  if(clanState.animated){var wantAnim=clanState.animated==='1';if(!!statusOf(c).animated!==wantAnim)return false;}
+  if(clanState.animated&&!statusOf(c).animated)return false;
+  if(clanState.hasImages&&!galleryImages(c.id).length)return false;
   if(clanState.search){var s=clanState.search;if(c.name.toLowerCase().indexOf(s)<0&&c.abilities.join(' ').toLowerCase().indexOf(s)<0&&c.arch.toLowerCase().indexOf(s)<0)return false;}return true;}
 function paintClan(){var list=CHARS.filter(function(c){return c.clan===clanState.clan&&matchClan(c);});
   el('clanCount').textContent=list.length+' of 50 units shown';
@@ -1592,7 +1718,7 @@ function renderTasksPage(){resetTheme();
   taskState={search:'',category:'',sprint:'',modeler:'',texturer:''};
   var catSet={};TASKS.forEach(function(t){if(t.category)catSet[t.category]=1;});
   var catOpts='<option value="">All categories</option>'+Object.keys(catSet).sort().map(function(cat){return '<option>'+esc(cat)+'</option>';}).join('');
-  var sprintOpts='<option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('');
   var modelerOpts='<option value="">All modelers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
   var texturerOpts='<option value="">All texturers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
   APP.innerHTML='<header class="hero"><div class="wrap">'+memBanner()
@@ -1642,13 +1768,12 @@ function paintTasksPage(){var list=allTaskLikeEntries().filter(matchTaskState);
   body.querySelectorAll('.ccard').forEach(function(card){card.addEventListener('click',function(){
     var id=card.getAttribute('data-tid');
     if(card.getAttribute('data-ischar')==='1')openModal(id);else openTaskModal(id);});});}
+// Just the image (or the "no art" placeholder) — no name, tags, or status
+// dots on the card itself. Clicking it opens openTaskModal below, which is
+// where the name and every other detail actually live.
 function taskCardHTML(t){var img=primaryOf(t),imgs=IMAGES[t.id]||[],isChar=isCharEntry(t);
   var thumb=img?'<img loading="lazy" src="'+img.data+'" alt="'+esc(t.name)+'">'+(imgs.length>1?'<span class="imgcount">'+imgs.length+' imgs</span>':''):'<div class="noimg"><span class="glyph">'+esc(t.name.charAt(0))+'</span><span>no art</span></div>';
-  var tag=isChar?'<span class="role arch">From '+esc(CLAN_META[t.clan]?CLAN_META[t.clan].name:t.clan)+'</span>':(t.category?'<span class="role arch">'+esc(t.category)+'</span>':'<span class="role">Uncategorised</span>');
-  return '<button class="ccard'+(isDone(t)?' done':'')+'" data-tid="'+t.id+'" data-ischar="'+(isChar?1:0)+'"><div class="thumb">'+(isDone(t)?'<span class="done-badge">✓ Completed</span>':'')+thumb+'</div>'
-    +'<div class="cbody"><h3 class="cname">'+esc(t.name)+'</h3>'
-    +'<div class="roles">'+tag+sprintTag(t)+'</div>'
-    +statusPips(t)+'</div></button>';}
+  return '<button class="ccard task-cc'+(isDone(t)?' done':'')+'" data-tid="'+t.id+'" data-ischar="'+(isChar?1:0)+'" title="'+esc(t.name)+'"><div class="thumb">'+(isDone(t)?'<span class="done-badge">✓ Completed</span>':'')+thumb+'</div></button>';}
 function openTaskModal(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;var gal=galleryOf(t),s=statusOf(t);
   var galMain=gal.length?'<div class="gal-main"><img id="galImg" src="'+gal[0].data+'" alt="'+esc(t.name)+'"><button class="gal-expand" id="galExpand" title="View full screen">⛶</button></div>':'<div class="gal-main"><div class="gal-empty"><span class="glyph">'+esc(t.name.charAt(0))+'</span><span class="mono" style="font-size:11px">No art yet</span></div></div>';
   var thumbs=gal.length>1?'<div class="gal-thumbs">'+gal.map(function(im,i){return '<button data-src="'+im.data+'" data-idx="'+i+'" class="'+(i===0?'active':'')+'"><img src="'+im.data+'" alt=""></button>';}).join('')+'</div>':'';
@@ -1674,13 +1799,25 @@ function openTaskModal(id){var t=TASKS.find(function(x){return x.id===id;});if(!
 
 /* ============================================================ DASHBOARD */
 var dash={search:'',clan:'',sprint:'',artist:'',onlyArt:false,view:'list'};
+// dash.sprint starts out blank (not yet defaulted) rather than hard-coding
+// a sprint number here, because SPRINT_DEFS is still the hard-coded
+// DEFAULT_SPRINTS fallback at script-parse time — the real list only
+// loads later, in boot(). renderRoster() below fills it in with whichever
+// sprint is actually current the first time the dashboard is shown, and
+// leaves it alone after that so switching tabs doesn't keep resetting
+// a filter the admin deliberately changed.
+var DASH_SPRINT_INITED=false;
 var dashTab='roster';
 function renderDashboard(){resetTheme();
   if(!HAS_ADMIN_PW)return renderSetup();
   if(!CURRENT_USER)return renderLogin();
   if(CURRENT_USER===ADMIN_NAME&&!AUTHED)return renderLogin();
   var admin=isAdmin();var role=myRole();
-  var tabs=[{k:'roster',label:'Roster'},{k:'tasks',label:'Tasks'},{k:'scores',label:'Scores'},{k:'analytics',label:'Analytics'}];
+  // Analytics is Admin/Reviewer only — an Editor/Artist/Viewer never sees the
+  // tab at all (not just a locked view of it), same as the Home/Security/
+  // Settings tabs below.
+  var tabs=[{k:'roster',label:'Roster'},{k:'tasks',label:'Tasks'},{k:'scores',label:'Scores'}];
+  if(canReview())tabs.push({k:'analytics',label:'Analytics'});
   if(admin)tabs=tabs.concat([{k:'home',label:'Front page'},{k:'security',label:'Users & access'},{k:'settings',label:'Settings & sync'}]);
   if(!tabs.some(function(t){return t.k===dashTab;}))dashTab='roster';
   var tabBar='<div class="cr-tabs">'+tabs.map(function(t){return '<button class="cr-tab'+(t.k===dashTab?' on':'')+'" data-tab="'+t.k+'">'+esc(t.label)+'</button>';}).join('')+'</div>';
@@ -1710,8 +1847,11 @@ function showTab(t){var c=el('crContent');if(!c)return;
    every one of them in their read-only shape; this just supplies a header/
    tab-bar with no login gate and no Home/Security/Settings tabs. */
 var shareTab='roster';
+// Analytics is admin/reviewer-only (see renderDashboard) and never offered
+// here at all — a share link is by nature for someone outside those roles,
+// and SHARE_MODE pins every viewer's role to Viewer regardless anyway.
 function renderShareDashboard(query){resetTheme();query=query||{};
-  var tabs=[{k:'roster',label:'Roster'},{k:'tasks',label:'Tasks'},{k:'scores',label:'Scores'},{k:'analytics',label:'Analytics'}];
+  var tabs=[{k:'roster',label:'Roster'},{k:'tasks',label:'Tasks'},{k:'scores',label:'Scores'}];
   shareTab=tabs.some(function(t){return t.k===query.tab;})?query.tab:'roster';
   // Pre-filters are a one-time nudge for whoever opens the link, not a lock —
   // they land on the scope the admin picked but can still change filters or
@@ -1733,21 +1873,24 @@ function showShareTab(t){var c=el('crContent');if(!c)return;
   renderRoster(c);}
 
 function renderRoster(c){var admin=canEditChars();
+  if(!DASH_SPRINT_INITED){DASH_SPRINT_INITED=true;if(dash.sprint===''||dash.sprint==null)dash.sprint=currentSprintNum();}
   var clanChips='<button class="chip" data-dclan="" aria-pressed="'+(dash.clan?'false':'true')+'">All clans</button>'+CLAN_ORDER.map(function(id){return '<button class="chip" data-dclan="'+id+'" aria-pressed="'+(dash.clan===id?'true':'false')+'"><span class="clan-dot" style="background:'+CLAN_META[id].accent+'"></span>'+esc(CLAN_META[id].name)+'</button>';}).join('');
-  var sprintChips='<button class="chip" data-dsprint="" aria-pressed="'+(dash.sprint?'false':'true')+'">All sprints</button>'+SPRINT_DEFS.map(function(s){return '<button class="chip" data-dsprint="'+s.n+'" aria-pressed="'+(String(dash.sprint)===String(s.n)?'true':'false')+'">'+esc(s.name)+'</button>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+(String(dash.sprint)===String(s.n)?' selected':'')+'>'+esc(s.name)+(s.n===currentSprintNum()?' (current)':'')+'</option>';}).join('');
   var artistOpts='<option value="">All artists</option>'+userNames().map(function(n){return '<option'+(dash.artist===n?' selected':'')+'>'+esc(n)+'</option>';}).join('');
   c.innerHTML='<div class="dash-toolbar">'+(admin?'<button class="btn accent" id="btnNew">+ New character</button>':'')
       +'<div class="search" style="max-width:240px"><span class="mono" style="color:var(--bark)">\u2315</span><input id="dSearch" type="search" placeholder="Search units\u2026" value="'+esc(dash.search)+'"></div>'
+      +'<label class="filt"><span>Sprint</span><select id="dSprint" class="filt-sel">'+sprintOpts+'</select></label>'
       +'<label class="filt"><span>Artist</span><select id="dArtist" class="filt-sel">'+artistOpts+'</select></label>'
       +'<label class="chk"><input type="checkbox" id="dArt"'+(dash.onlyArt?' checked':'')+'> Only with art</label>'
       +'<span style="flex:1"></span>'
       +'<div class="viewtoggle"><button class="vt'+(dash.view==='list'?' on':'')+'" data-view="list">List</button><button class="vt'+(dash.view==='grid'?' on':'')+'" data-view="grid">Grid</button></div></div>'
-    +'<div class="chipset dash-chips">'+clanChips+'</div><div class="chipset dash-chips">'+sprintChips+'</div>'
+    +'<div class="chipset dash-chips">'+clanChips+'</div>'
     +'<div class="dash-grid"><div><div class="dash-list" id="dashList"></div></div><div id="editorMount"></div></div>';
   el('dSearch').addEventListener('input',function(){dash.search=this.value.toLowerCase();selected={};paintDashList();});
+  el('dSprint').addEventListener('change',function(){dash.sprint=this.value;selected={};paintDashList();});
   el('dArt').addEventListener('change',function(){dash.onlyArt=this.checked;selected={};paintDashList();});
   el('dArtist').addEventListener('change',function(){dash.artist=this.value;selected={};paintDashList();});
-  dchips('[data-dclan]','clan');dchips('[data-dsprint]','sprint');
+  dchips('[data-dclan]','clan');
   var bn=el('btnNew');if(bn)bn.addEventListener('click',function(){startEdit(null);});
   c.querySelectorAll('[data-view]').forEach(function(b){b.addEventListener('click',function(){
     dash.view=b.getAttribute('data-view');
@@ -1771,7 +1914,7 @@ function paintDashList(){var admin=canEditChars();var canDel=isAdmin();var list=
   var mount=el('dashList');if(!list.length){mount.innerHTML='<div class="empty-state"><div class="glyph">\u2205</div><p>No units match. Adjust the search or filters above.</p></div>';return;}
   var shown=list.slice(0,500);var canS=canStatus();
   function selBox(c){return canS?'<label class="selbox"><input type="checkbox" data-sel="'+c.id+'"'+(selected[c.id]?' checked':'')+'></label>':'';}
-  function sprintSel(c){if(!admin)return '';return '<select class="mini-sprint" data-sprint-id="'+c.id+'" title="Change sprint">'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+((c.sprint||1)===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('')+'</select>';}
+  function sprintSel(c){if(!admin)return '';return '<select class="mini-sprint" data-sprint-id="'+c.id+'" title="Change sprint">'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+((c.sprint||1)===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('')+'</select>';}
   function revTag(c){var r=reviewOf(c);if(!r.status&&!r.count&&!r.redos)return '';var lab=r.status==='approved'?'\u2713 reviewed':r.status==='rejected'?'redo':r.status==='in_review'?'in review':'';return '<span class="rev-mini '+(r.status||'')+'">'+(lab?lab:'')+(r.count?(lab?' \u00b7 ':'')+r.count+' rev':'')+(r.redos?' \u21ba'+r.redos:'')+'</span>';}
   function acts(c){var b='';
     if(canS)b+='<button class="btn '+(isDone(c)?'accent':'ghost')+' sm" data-done="'+c.id+'">'+(isDone(c)?'\u2713 Done':'Mark done')+'</button>';
@@ -1805,7 +1948,7 @@ function bulkBar(shown){if(!canStatus())return '';var admin=canEditChars();var s
     +'<span class="bulk-count'+(shownSel?' on':'')+'">'+shownSel+' selected</span>'
     +(shownSel?'<span class="bulk-actions"><button class="btn accent sm" data-bulk="done">Mark completed</button>'
       +'<button class="btn ghost sm" data-bulk="undone">Mark incomplete</button>'
-      +(admin?'<select class="mini-sprint" id="bulkSprint"><option value="">Move to sprint\u2026</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('')+'</select>':'')
+      +(admin?'<select class="mini-sprint" id="bulkSprint"><option value="">Move to sprint\u2026</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('')+'</select>':'')
       +'<button class="btn ghost sm" data-bulk="clear">Clear</button></span>':'')+'</div>';}
 function bindBulk(shown){
   var sa=el('selAll');if(sa)sa.addEventListener('change',function(){shown.forEach(function(c){if(sa.checked)selected[c.id]=true;else delete selected[c.id];});paintDashList();});
@@ -1827,13 +1970,22 @@ function reviewAct(id,act){var c=CHARS.find(function(x){return x.id===id;});if(!
     paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
 function selIds(){return Object.keys(selected).filter(function(id){return selected[id];});}
 function setSprint(id,val){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;c.sprint=val;c.updatedAt=Date.now();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast(c.name+' → '+sprintName(val));paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast(c.name+' → '+sprintName(val));
+    // Setting a character's sprint from here is already saved, so jumping
+    // straight to that sprint's Tasks view (rather than repainting the
+    // roster the admin just left) is a safe, immediate next step — not the
+    // mid-edit character form, where navigating away could lose unsaved
+    // changes to other fields.
+    taskDash.sprint=val;if(typeof setTab==='function'&&el('crContent'))setTab('tasks');else paintDashList();
+  }).catch(function(err){toast('Update failed: '+err);});}
 function bulkComplete(val){var ids=selIds();if(!ids.length){toast('Select characters first');return;}
   var ops=[],changed=[];ids.forEach(function(id){var c=CHARS.find(function(x){return x.id===id;});if(c){c.completed=val;c.updatedAt=Date.now();ops.push(putChar(c));changed.push(c);}});
   Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});toast((val?'Marked ':'Unmarked ')+changed.length+' completed');paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
 function bulkSprint(val){var ids=selIds();if(!ids.length){toast('Select characters first');return;}
   var ops=[],changed=[];ids.forEach(function(id){var c=CHARS.find(function(x){return x.id===id;});if(c){c.sprint=val;c.updatedAt=Date.now();ops.push(putChar(c));changed.push(c);}});
-  Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});toast('Moved '+changed.length+' to '+sprintName(val));paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
+  Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});toast('Moved '+changed.length+' to '+sprintName(val));
+    taskDash.sprint=val;if(typeof setTab==='function'&&el('crContent'))setTab('tasks');else paintDashList();
+  }).catch(function(err){toast('Update failed: '+err);});}
 
 /* ---------- analytics ---------- */
 function toggleAnalytics(){var m=el('analyticsMount');if(!m)return;if(m.dataset.open){m.dataset.open='';m.innerHTML='';return;}m.dataset.open='1';renderAnalytics(m);}
@@ -1979,14 +2131,16 @@ function renameUser(oldName,newNameRaw){var box=el('secRenameFlow');var newName=
       USERS=(us&&us.length)?us:DEFAULT_USERS.slice();
       USERS=USERS.map(function(x){return typeof x==='string'?{name:x,role:(x===ADMIN_NAME?'Admin':'Artist')}:x;});
       return getSetting('artistGoals');
-    }).then(function(ag){ARTIST_GOALS=(ag&&typeof ag==='object')?ag:{};return loadCaches();})
+    }).then(function(ag){ARTIST_GOALS=(ag&&typeof ag==='object')?ag:{};
+      return getSetting('artistDoneOverrides');
+    }).then(function(ado){ARTIST_DONE_OVERRIDES=(ado&&typeof ado==='object')?ado:{};return loadCaches();})
     .then(function(){if(CURRENT_USER===oldName)userSetLS(newName);
       var changed=(r.charactersChanged||0)+(r.tasksChanged||0)+(r.imagesChanged||0);
       toast('Renamed '+oldName+' → '+newName+(changed?' — assignments & image credits updated':''));
       if(box)box.innerHTML='';renderSecurity();renderUserWidget();
       CHARS.forEach(function(c){if(modeledOf(c)===newName||texturedOf(c)===newName)syncUpsert(c);});});
   }).catch(function(err){toast('Rename failed: '+(err&&err.message?err.message:err));});}
-function computeAnalytics(){var total=CHARS.length,completed=0,reviews=0,redos=0,rejected=0,stages={approved:0,modeling:0,rigged:0,stored:0},bySprint={},byClan={},byArtist={};
+function computeAnalytics(){var total=CHARS.length,completed=0,reviews=0,redos=0,rejected=0,stages={approved:0,modeling:0,rigged:0,animated:0,stored:0},bySprint={},byClan={},byArtist={};
   function bumpA(name,key){if(!name)return;byArtist[name]=byArtist[name]||{modeled:0,textured:0,done:0};byArtist[name][key]++;}
   CHARS.forEach(function(c){var d=isDone(c);if(d)completed++;var s=statusOf(c);STAGES.forEach(function(st){if(s[st.key])stages[st.key]++;});
     var rv=reviewOf(c);reviews+=rv.count;redos+=rv.redos;if(rv.status==='rejected')rejected++;
@@ -2067,7 +2221,7 @@ var taskDash={search:'',category:'',sprint:'',artist:'',onlyArt:false};
 function renderTaskDash(c){if(!c)return;var admin=canEditChars();
   var catSet={};TASKS.forEach(function(t){if(t.category)catSet[t.category]=1;});
   var catOpts='<option value="">All categories</option>'+Object.keys(catSet).sort().map(function(cat){return '<option'+(taskDash.category===cat?' selected':'')+'>'+esc(cat)+'</option>';}).join('');
-  var sprintOpts='<option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+(String(taskDash.sprint)===String(s.n)?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+(String(taskDash.sprint)===String(s.n)?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
   var artistOpts='<option value="">All assignees</option>'+userNames().map(function(n){return '<option'+(taskDash.artist===n?' selected':'')+'>'+esc(n)+'</option>';}).join('');
   c.innerHTML='<div class="dash-toolbar">'+(admin?'<button class="btn accent" id="btnNewTask">+ New task</button>':'')+(isAdmin()?'<button class="btn ghost" id="btnAddCharTask">+ Add existing character</button>':'')
       +'<div class="search" style="max-width:240px"><span class="mono" style="color:var(--bark)">⌕</span><input id="tSearch" type="search" placeholder="Search tasks…" value="'+esc(taskDash.search)+'"></div>'
@@ -2093,6 +2247,7 @@ function matchTask(t){
   if(taskDash.artist&&modeledOf(t)!==taskDash.artist&&texturedOf(t)!==taskDash.artist)return false;
   if(taskDash.search){var s=taskDash.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0&&sprintName(t.sprint||0).toLowerCase().indexOf(s)<0)return false;}
   return true;}
+var taskRowExpanded={};
 function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canStatus();var list=allTaskLikeEntries().filter(matchTask);
   if(!list.length){mount.innerHTML='<div class="empty-state"><div class="glyph">∅</div><p>No tasks match. Adjust the search or filters above, or add one.</p></div>';return;}
   function revTag(t){var r=reviewOf(t);if(!r.status&&!r.count&&!r.redos)return '';var lab=r.status==='approved'?'✓ reviewed':r.status==='rejected'?'redo':r.status==='in_review'?'in review':'';return '<span class="rev-mini '+(r.status||'')+'">'+(lab?lab:'')+(r.count?(lab?' · ':'')+r.count+' rev':'')+(r.redos?' ↺'+r.redos:'')+'</span>';}
@@ -2104,11 +2259,23 @@ function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canS
       else b+='<button class="btn danger xs" data-tdel="'+t.id+'" title="Remove task" aria-label="Remove">✕</button>';
     }
     return b;}
+  // Collapsed by default to just the character's image — no name, no status,
+  // nothing else — so a sprint full of tasks reads as a strip of thumbnails.
+  // Clicking one swaps it in place for the full detail row (name, sprint,
+  // image count, who's modeling/texturing it, the edit/done/delete actions),
+  // tracked per task id in taskRowExpanded so it survives a repaint (e.g.
+  // after Mark done).
   function rowHTML(t){var img=primaryOf(t),n=(IMAGES[t.id]||[]).length,isChar=isCharEntry(t);
+    var open=!!taskRowExpanded[t.id];
+    if(!open){
+      return '<button class="task-tile'+(isDone(t)?' done':'')+'" data-trow="'+t.id+'" title="'+esc(t.name)+' — click for details">'
+        +(img?'<img src="'+img.data+'" alt="'+esc(t.name)+'">':esc(t.name.charAt(0)))+'</button>';
+    }
     var assign=(modeledOf(t)||texturedOf(t))?' · <span class="assign">M:'+esc(modeledOf(t)||'–')+' · T:'+esc(texturedOf(t)||'–')+'</span>':'';
     var tag=isChar?'From '+esc(CLAN_META[t.clan]?CLAN_META[t.clan].name:t.clan)+' · ':(t.category?esc(t.category)+' · ':'Uncategorised · ');
-    return '<div class="row'+(isDone(t)?' done':'')+'"><div class="rthumb">'+(img?'<img src="'+img.data+'">':esc(t.name.charAt(0)))+'</div>'
-      +'<div class="rmain"><b>'+esc(t.name)+(isDone(t)?' <span class="done-chip sm">✓</span>':'')+revTag(t)+'</b><div class="rmeta">'+tag+esc(sprintName(t.sprint||0))+' · '+(n?n+' img':'no images')+assign+'</div></div>'
+    return '<div class="task-tile expanded row'+(isDone(t)?' done':'')+'" data-trow="'+t.id+'"><div class="rthumb">'+(img?'<img src="'+img.data+'">':esc(t.name.charAt(0)))+'</div>'
+      +'<div class="rmain"><b>'+esc(t.name)+(isDone(t)?' <span class="done-chip sm">✓</span>':'')+revTag(t)+' <span class="rchev">▴ less</span></b>'
+      +'<div class="rmeta">'+tag+esc(sprintName(t.sprint||0))+' · '+(n?n+' img':'no images')+assign+'</div></div>'
       +statusPips(t)+'<div class="ract">'+acts(t)+'</div></div>';}
   // Grouped by sprint (current sprint's group first — see groupBySprintOrdered),
   // and within each sprint further clustered by credited artist (see
@@ -2116,10 +2283,13 @@ function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canS
   var groups=groupBySprintOrdered(list);
   var body=groups.map(function(g){
     var artistGroups=groupByArtistOrdered(g.items);
-    var inner=artistGroups.map(function(ag){return '<div class="artist-subgroup">'+artistSubHeader(ag)+ag.items.map(rowHTML).join('')+'</div>';}).join('');
+    var inner=artistGroups.map(function(ag){return '<div class="artist-subgroup">'+artistSubHeader(ag)+'<div class="task-tiles">'+ag.items.map(rowHTML).join('')+'</div></div>';}).join('');
     return '<div class="sprint-group">'+sprintGroupHeader(g)+inner+'</div>';
   }).join('');
   mount.innerHTML=body;
+  mount.querySelectorAll('[data-trow]').forEach(function(row){row.addEventListener('click',function(e){
+    if(e.target.closest('.ract'))return; // let the action buttons behave normally, don't also toggle the row
+    var id=row.getAttribute('data-trow');taskRowExpanded[id]=!taskRowExpanded[id];paintTaskList();});});
   mount.querySelectorAll('[data-tedit]').forEach(function(b){b.addEventListener('click',function(){
     var id=b.getAttribute('data-tedit');
     if(b.getAttribute('data-ischar')==='1'){setTab('roster');setTimeout(function(){startEdit(id);},60);}
@@ -2221,7 +2391,7 @@ function renderTaskEditor(e){var mount=el('taskEditorMount');if(!mount)return;
   // SPRINT_DEFS list characters use, so a task's sprint has no connection to
   // any clan's own sprint count, and an admin can always backdate a task to
   // a sprint that's already finished if they forgot to log it at the time.
-  var taskSprintOpts=SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+((e.sprint||1)===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
+  var taskSprintOpts=sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+((e.sprint||1)===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
   mount.innerHTML='<div class="editor"><h3>'+(e.id?'Edit task':'New task')+'</h3><div class="esub">'+(e.id?esc(e.id):'unsaved')+'</div>'
     +'<div class="field"><label>Name</label><input id="tfName" value="'+esc(e.name)+'" placeholder="Task name, e.g. Riverside environment"></div>'
     +'<div class="grid2"><div class="field"><label>Category</label><input id="tfCategory" list="tCatList" value="'+esc(e.category)+'" placeholder="e.g. Environment, Props, UI…"><datalist id="tCatList">'+catList.map(function(c){return '<option value="'+esc(c)+'">';}).join('')+'</datalist></div><div class="field"><label>Sprint</label><select id="tfSprint">'+taskSprintOpts+'</select></div></div>'
@@ -2383,11 +2553,11 @@ var scoresState={sprint:null};
 function renderScoresDash(c){if(!c)return;
   if(!SPRINT_DEFS.length){c.innerHTML='<div class="empty-state"><div class="glyph">∅</div><p>No sprints set up yet — add one in Settings &amp; sync → Sprints.</p></div>';return;}
   if(scoresState.sprint==null||!sprintDef(scoresState.sprint))scoresState.sprint=lastSprint();
-  var sprintOpts=SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+(scoresState.sprint===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
+  var sprintOpts=sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+(scoresState.sprint===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
   var dt=sprintDates(scoresState.sprint);
   c.innerHTML='<div class="dash-toolbar"><label class="filt"><span>Sprint</span><select id="scoreSprint" class="filt-sel">'+sprintOpts+'</select></label>'
       +(dt?'<span class="hint">'+esc(dt)+'</span>':'')+'<span style="flex:1"></span>'
-      +'<span class="hint">Goal: <b>'+DEFAULT_ARTIST_GOAL+'</b> completed characters per sprint = 100 score'+(isAdmin()?' · click a goal to adjust it for complex work':'')+'</span></div>'
+      +'<span class="hint">Goal: <b>'+DEFAULT_ARTIST_GOAL+'</b> completed characters per sprint = 100 score · counts clan characters and Tasks-board items alike'+(isAdmin()?' · click a goal or completed count to adjust it (e.g. for a half-finished item)':'')+'</span></div>'
     +'<div id="scoreBody"></div>';
   el('scoreSprint').addEventListener('change',function(){scoresState.sprint=Number(this.value);paintScores();});
   paintScores();}
@@ -2398,8 +2568,11 @@ function paintScores(){var mount=el('scoreBody');if(!mount)return;var sprintN=sc
     var goalField=admin
       ? '<input type="number" class="goal-inp" step="0.5" min="0" data-goal-artist="'+esc(r.name)+'" value="'+r.goal+'">'
       : '<b>'+r.goal+'</b>';
+    var doneField=admin
+      ? '<input type="number" class="goal-inp" step="0.5" min="0" title="Auto-counted: '+r.autoDone+'. Override when real progress includes a half-finished item the auto-count can’t capture." data-done-artist="'+esc(r.name)+'" value="'+r.done+'">'
+      : '<b>'+r.done+'</b>';
     return '<div class="artist-row"><span class="ar-name"><span class="uw-ava sm">'+esc(initials(r.name))+'</span>'+esc(r.name)+'</span>'
-      +'<span class="ar-stat">Completed <b>'+r.done+'</b></span>'
+      +'<span class="ar-stat">Completed '+doneField+(r.doneOverridden?' <button class="btn ghost xs" data-done-reset="'+esc(r.name)+'" title="Reset to the auto-counted '+r.autoDone+'">↺</button>':'')+'</span>'
       +'<span class="ar-stat">Goal '+goalField+(r.overridden?' <button class="btn ghost xs" data-goal-reset="'+esc(r.name)+'" title="Reset to the default '+DEFAULT_ARTIST_GOAL+'">↺</button>':'')+'</span>'
       +'<div class="astat-bar" style="flex:1;min-width:90px"><i style="width:'+Math.min(r.score,100)+'%;background:'+(r.score>=100?'var(--glow)':'var(--accent)')+'"></i></div>'
       +'<span class="ar-stat'+(r.score>=100?' done':'')+'"><b>'+r.score+'%</b></span></div>';
@@ -2409,7 +2582,13 @@ function paintScores(){var mount=el('scoreBody');if(!mount)return;var sprintN=sc
     setArtistGoal(sprintN,name,v).then(function(){toast('Goal updated for '+name);paintScores();}).catch(function(err){toast('Update failed: '+err);});});});
   mount.querySelectorAll('[data-goal-reset]').forEach(function(b){b.addEventListener('click',function(){
     var name=b.getAttribute('data-goal-reset');
-    setArtistGoal(sprintN,name,null).then(function(){toast('Goal reset for '+name);paintScores();}).catch(function(err){toast('Update failed: '+err);});});});}
+    setArtistGoal(sprintN,name,null).then(function(){toast('Goal reset for '+name);paintScores();}).catch(function(err){toast('Update failed: '+err);});});});
+  mount.querySelectorAll('[data-done-artist]').forEach(function(inp){inp.addEventListener('change',function(){
+    var name=inp.getAttribute('data-done-artist'),v=inp.value===''?null:Number(inp.value);
+    setArtistDone(sprintN,name,v).then(function(){toast('Completed count updated for '+name);paintScores();}).catch(function(err){toast('Update failed: '+err);});});});
+  mount.querySelectorAll('[data-done-reset]').forEach(function(b){b.addEventListener('click',function(){
+    var name=b.getAttribute('data-done-reset');
+    setArtistDone(sprintN,name,null).then(function(){toast('Completed count reset for '+name);paintScores();}).catch(function(err){toast('Update failed: '+err);});});});}
 
 /* ---------- settings / sheet sync panel ---------- */
 function showSettings(){if(!isAdmin())return;var mount=el('settingsMount');if(!mount)return;
@@ -2425,13 +2604,17 @@ function renderSettingsInner(mount){if(!mount)return;
     +'<div class="divider"></div>'
     +'<div class="field"><label>Read-only share link</label><div class="hint">Hand this to someone outside the team (a producer, a client) so they can see live production status, with no login, and nothing on it can be edited. Pick a starting tab and, if you like, narrow it to one clan or sprint; the recipient can still switch from there.</div>'
       +'<div class="panel-row">'
-        +'<select id="shrTab"><option value="roster">Roster</option><option value="tasks">Tasks</option><option value="scores">Scores</option><option value="analytics">Analytics</option></select>'
+        +'<select id="shrTab"><option value="roster">Roster</option><option value="tasks">Tasks</option><option value="scores">Scores</option></select>'
         +'<select id="shrClan"><option value="">All clans</option>'+CLAN_ORDER.map(function(id){return '<option value="'+id+'">'+esc(CLAN_META[id].name)+'</option>';}).join('')+'</select>'
-        +'<select id="shrSprint"><option value="">All sprints</option>'+SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('')+'</select>'
+        +'<select id="shrSprint"><option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('')+'</select>'
         +'<button class="btn accent sm" id="shrCopy">Copy share link</button><button class="btn ghost sm" id="shrOpen">Preview</button>'
       +'</div><div id="shrUrlOut" class="hint" style="word-break:break-all"></div></div>'
     +'<div class="divider"></div>'
-    +'<div class="panel-row"><button class="btn ghost sm" id="setExport">Export JSON backup</button><button class="btn ghost sm" id="setExportXlsx">Export as Excel (with images)</button><label class="btn ghost sm" style="cursor:pointer">Import JSON<input type="file" id="setImp" accept="application/json" hidden></label><button class="btn ghost sm" id="setChangePw">Change admin password</button><button class="btn danger sm" id="setReset">Reset to defaults</button></div>'
+    +'<div class="field"><label>Site theme</label><div class="hint">Picks the colour palette everyone sees across the whole site \u2014 teammates and anyone on a share link. Only you can change it.</div>'
+      +'<div class="panel-row"><select id="setTheme">'+Object.keys(SITE_THEMES).map(function(id){return '<option value="'+id+'"'+((CURRENT_SITE_THEME===id||(!CURRENT_SITE_THEME&&id==='midnight'))?' selected':'')+'>'+esc(SITE_THEMES[id].label)+'</option>';}).join('')+'</select>'
+        +'<button class="btn accent sm" id="setThemeSave">Apply theme</button></div></div>'
+    +'<div class="divider"></div>'
+    +'<div class="panel-row"><button class="btn ghost sm" id="setExport">Export JSON backup</button><button class="btn ghost sm" id="setExportXlsx">Export as Excel (with images)</button><button class="btn ghost sm" id="setExportImgs">Export all images (.zip)</button><label class="btn ghost sm" style="cursor:pointer">Import JSON<input type="file" id="setImp" accept="application/json" hidden></label><button class="btn ghost sm" id="setChangePw">Change admin password</button><button class="btn danger sm" id="setReset">Reset to defaults</button></div>'
     +'<div id="pwMount"></div>'
     +'<div class="divider"></div><div id="clansMount"></div><div class="divider"></div><div id="sprintsMount"></div>'
     +'</div>';
@@ -2441,12 +2624,14 @@ function renderSettingsInner(mount){if(!mount)return;
   el('setSyncAll').addEventListener('click',function(){SHEET_URL=el('setSheet').value.trim();setSetting('sheetUrl',SHEET_URL).then(syncAll);});
   el('setGuide').addEventListener('click',showGuide);
   el('setSaveEmail').addEventListener('click',function(){var v=el('setRecEmail').value.trim();ADMIN_EMAIL=v;setSetting('adminEmail',ADMIN_EMAIL).then(function(){toast(ADMIN_EMAIL?'Recovery email saved':'Recovery email cleared');});});
+  el('setThemeSave').addEventListener('click',function(){var v=el('setTheme').value;saveSiteTheme(v).then(function(){toast('Theme “'+(SITE_THEMES[v]?SITE_THEMES[v].label:v)+'” applied for everyone');});});
   el('shrCopy').addEventListener('click',function(){var u=buildShareUrl();el('shrUrlOut').textContent=u;
     if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(u).then(function(){toast('Share link copied');},function(){toast('Link ready below — select & copy');});
     else toast('Link ready below — select & copy');});
   el('shrOpen').addEventListener('click',function(){window.open(buildShareUrl(),'_blank');});
   el('setExport').addEventListener('click',exportData);
   el('setExportXlsx').addEventListener('click',exportExcel);
+  el('setExportImgs').addEventListener('click',exportAllImages);
   el('setImp').addEventListener('change',importData);
   el('setChangePw').addEventListener('click',showPwPanel);
   el('setReset').addEventListener('click',resetData);
@@ -2485,7 +2670,7 @@ function deleteClan(id){if(!CLAN_META[id])return;if(CLAN_ORDER.length<=1){toast(
     return saveClans();}).then(function(){toast('Clan deleted');renderClans();if(el('dashList'))paintDashList();}).catch(function(err){toast('Delete failed: '+err);});}
 function renderSprints(){var m=el('sprintsMount');if(!m)return;
   m.innerHTML='<h3 style="font-size:16px;margin:0 0 4px">Sprints</h3><div class="hint" style="margin:0 0 10px">Name each sprint, set its start &amp; end dates, and add as many as you need. Setting a start date fills in a two-week end date automatically \u2014 adjust it if a sprint runs longer or shorter.</div>'
-    +'<div class="sprint-rows">'+SPRINT_DEFS.map(function(s){return '<div class="sprint-row">'
+    +'<div class="sprint-rows">'+sprintsNewestFirst().map(function(s){return '<div class="sprint-row">'
       +'<input class="sp-name" data-sp="'+s.n+'" value="'+esc(s.name)+'" placeholder="Sprint name">'
       +'<input class="sp-date" type="date" data-sps="'+s.n+'" value="'+esc(s.start||'')+'" title="Start date">'
       +'<input class="sp-date" type="date" data-spe="'+s.n+'" value="'+esc(s.end||'')+'" title="End date">'
@@ -2599,7 +2784,7 @@ function showGuide(){var back=h('<div class="modal-back"></div>');
 
 /* ---------- editor ---------- */
 var edit=null;
-function blankChar(){return{id:null,clan:'aranyani',num:'',name:'',mana:0,arch:'Support',type:'Magic',tier:'Basic',sprint:firstSprint(),gender:'',height:'',l1:'',l6:'',l12:'',abilities:[],images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',weaponName:'',weaponImage:null,completed:false,review:{status:'',count:0,redos:0},history:[],removedExistingIds:[],removedWeaponId:null,weaponArchiveOps:[]};}
+function blankChar(){return{id:null,clan:'aranyani',num:'',name:'',mana:0,arch:'Support',type:'Magic',tier:'Basic',sprint:currentSprintNum(),gender:'',height:1.6,l1:'',l6:'',l12:'',abilities:[],images:[],primaryId:null,status:defStatus(),modeledBy:'',texturedBy:'',weaponName:'',weaponImage:null,completed:false,review:{status:'',count:0,redos:0},history:[],removedExistingIds:[],removedWeaponId:null,weaponArchiveOps:[]};}
 function weaponEditOf(id){var w=weaponImageOf(id);return w?{id:w.id,name:w.name,data:w.data,by:w.by||null,ts:w.ts,existing:true}:null;}
 function startEdit(id){if(!id&&!canEditChars())return;if(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
     edit={id:c.id,clan:c.clan,num:c.num,name:c.name,mana:c.mana,arch:c.arch,type:c.type,tier:c.tier,sprint:c.sprint||1,gender:c.gender||'',height:c.height||'',l1:c.l1,l6:c.l6,l12:c.l12,
@@ -2616,7 +2801,7 @@ function renderEditor(e){var mount=el('editorMount');if(!mount)return;
   function opts(arr,val){return arr.map(function(o){return '<option'+(String(val)===String(o)?' selected':'')+'>'+o+'</option>';}).join('');}
   var clanOpts=CLAN_ORDER.map(function(id){return '<option value="'+id+'"'+(e.clan===id?' selected':'')+'>'+esc(CLAN_META[id].name)+'</option>';}).join('');
   var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-st="'+st.key+'"'+(e.status[st.key]?' checked':'')+'> '+esc(st.label)+'</label>';}).join('');
-  var sprintOpts=SPRINT_DEFS.map(function(s){return '<option value="'+s.n+'"'+((e.sprint||1)===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
+  var sprintOpts=sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+((e.sprint||1)===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
   var genderOpts=['','Male','Female','Other'].map(function(g){return '<option value="'+g+'"'+((e.gender||'')===g?' selected':'')+'>'+(g||'\u2014')+'</option>';}).join('');
   mount.innerHTML='<div class="editor"><h3>'+(e.id?'Edit unit':'New unit')+'</h3><div class="esub">'+(e.id?esc(e.id):'unsaved')+'</div>'
     +'<div class="field"><label>Name</label><input id="fName" value="'+esc(e.name)+'" placeholder="Unit name"></div>'
@@ -3001,6 +3186,51 @@ function exportExcel(){toast('Preparing Excel export…');
       a.click();URL.revokeObjectURL(a.href);
       toast(r.skipped?('Excel export ready ('+r.skipped+' image(s) could not be found and were skipped)'):'Excel export ready');})
     .catch(function(err){toast('Excel export failed: '+(err&&err.message?err.message:err));});}
+// All images, zipped and downloaded to the browser's normal download
+// location (there's no way for a web page to pick a folder on disk and
+// write straight into it) — organised the same way the roster already
+// groups things, clan/unit folders plus a Tasks folder, so unzipping it
+// gives a sensible local folder structure rather than one flat pile.
+function sanitizeFsName(s){return String(s||'').replace(/[\\/:*?"<>|]+/g,'_').replace(/\s+/g,' ').trim()||'untitled';}
+function extFromDataUrl(dataUrl){var m=/^data:([^;,]+)/.exec(dataUrl||'');var ct=m?m[1]:'';
+  if(ct.indexOf('png')>=0)return '.png';if(ct.indexOf('jpeg')>=0||ct.indexOf('jpg')>=0)return '.jpg';if(ct.indexOf('webp')>=0)return '.webp';if(ct.indexOf('gif')>=0)return '.gif';return '';}
+function exportAllImages(){
+  var imgs=allImagesFlat();
+  if(!imgs.length){toast('No images to export');return;}
+  toast('Preparing '+imgs.length+' image(s)…');
+  var zip;
+  loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js').then(function(){
+    zip=new window.JSZip();
+    var used={};
+    function uniquePath(p){var n=p,i=2;while(used[n]){var dot=n.lastIndexOf('.');n=(dot>0?n.slice(0,dot):n)+'_'+i+(dot>0?n.slice(dot):'');i++;}used[n]=true;return n;}
+    var total=imgs.length,done=0,skipped=0,CONCURRENCY=6,idx=0,active=0;
+    return new Promise(function(resolve){
+      function pump(){
+        if(done>=total){resolve(skipped);return;}
+        while(active<CONCURRENCY&&idx<total){(function(im){active++;idx++;
+          fetchImageAsDataUrl(im).then(function(entry){
+            var c=CHARS.find(function(x){return x.id===im.charId;});
+            var t=!c&&TASKS.find(function(x){return x.id===im.charId;});
+            var folder=c?(sanitizeFsName((CLAN_META[c.clan]&&CLAN_META[c.clan].name)||c.clan)+'/'+sanitizeFsName((c.num!=null?c.num+'_':'')+c.name))
+                       :t?('Tasks/'+sanitizeFsName(t.name))
+                       :'Unassigned';
+            var rawName=entry.name||im.id;var dot0=rawName.lastIndexOf('.');var hasExt=dot0>0&&rawName.length-dot0<=5;
+            var stem=hasExt?rawName.slice(0,dot0):rawName,ext=hasExt?rawName.slice(dot0):extFromDataUrl(entry.data);
+            var base=sanitizeFsName(stem)+(im.kind==='weapon'?' (weapon)':'')+(entry.archived?' (archived)':'')+ext;
+            zip.file(uniquePath(folder+'/'+base),entry.data.slice(entry.data.indexOf(',')+1),{base64:true});
+          },function(err){skipped++;console.warn('export-images: skipping '+im.id+' — '+(err&&err.message?err.message:err));})
+          .then(function(){active--;done++;toast('Packing images… '+done+' / '+total);pump();});
+        })(imgs[idx]);}
+      }
+      pump();
+    });
+  }).then(function(skipped){
+    return zip.generateAsync({type:'blob'}).then(function(blob){return{blob:blob,skipped:skipped};});
+  }).then(function(r){
+    var a=document.createElement('a');a.href=URL.createObjectURL(r.blob);a.download='character_codex_images.zip';a.click();URL.revokeObjectURL(a.href);
+    toast(r.skipped?('Downloaded images.zip — unzip into any folder ('+r.skipped+' image(s) could not be found and were skipped)'):'Downloaded images.zip — unzip into any folder');
+  }).catch(function(err){toast('Image export failed: '+(err&&err.message?err.message:err));});
+}
 var XLSX_HEADERS=['Image','#','Name','Clan','Sprint','Class','Type','Tier','Gender','Height','Mana','L1','L6','L12','Abilities','Approved','Modeling','Rigged','Stored','Completed','Modeled by','Textured by'];
 var XLSX_COL_WIDTHS=[14,6,22,14,10,12,10,10,9,9,7,12,12,12,26,9,9,8,8,10,14,14];
 function buildExcelWorkbook(d){var wb=new window.ExcelJS.Workbook();wb.creator='Character Codex';wb.created=new Date();
@@ -3104,6 +3334,8 @@ function boot(){APP=el('app');
     SPRINT_DEFS=SPRINT_DEFS.map(function(s){if(s.start==null)s.start='';if(s.end==null)s.end='';return s;});
     CURRENT_USER=userGet();renderUserWidget();
     return getSetting('artistGoals');}).then(function(ag){ARTIST_GOALS=(ag&&typeof ag==='object')?ag:{};
+    return getSetting('artistDoneOverrides');}).then(function(ado){ARTIST_DONE_OVERRIDES=(ado&&typeof ado==='object')?ado:{};
+    return getSetting('siteTheme');}).then(function(th){applySiteTheme(th||'');
     return getSetting('clans');}).then(function(cl){if(cl&&cl.order&&cl.order.length&&cl.meta){
       Object.keys(CLAN_META).forEach(function(k){delete CLAN_META[k];});
       Object.keys(cl.meta).forEach(function(k){CLAN_META[k]=cl.meta[k];});
