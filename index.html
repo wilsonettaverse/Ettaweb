@@ -141,6 +141,7 @@ img{max-width:100%; display:block}
 .sprint-group .card-grid{margin-top:12px}
 .sprint-group-h{display:flex; align-items:center; gap:10px; margin:0; padding-bottom:8px; border-bottom:1px solid var(--line-2); font-size:15px}
 .sprint-cur-tag{font-size:10px; padding:2px 8px; text-transform:uppercase; letter-spacing:.06em}
+.sprint-group-dates{font-size:11px; font-weight:400; color:var(--bark)}
 .sprint-group-count{margin-left:auto; font-weight:400}
 /* artist cluster nested inside a sprint group — one notch lighter than the
    sprint header so the sprint→artist hierarchy reads at a glance */
@@ -398,8 +399,10 @@ body.theme-dark .mem-banner{background:#2e2a1c; border-color:#5f5327; color:#e6d
   padding:5px 12px 5px 6px; cursor:pointer; font-family:var(--body); color:var(--ink); transition:border-color .15s}
 .uw-btn:hover{border-color:var(--accent)}
 .uw-ava{width:26px; height:26px; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center;
-  font-family:var(--mono); font-size:11px; font-weight:600}
+  font-family:var(--mono); font-size:11px; font-weight:600; flex:0 0 auto; overflow:hidden}
 .uw-ava.sm{width:20px; height:20px; font-size:9px}
+.uw-ava.photo{background:var(--surface-3)}
+.uw-ava img{width:100%; height:100%; object-fit:cover; display:block}
 .uw-name{font-family:var(--mono); font-size:12px; letter-spacing:.02em}
 .uw-name.muted{color:var(--bark)}
 .uw-caret{color:var(--bark); font-size:10px}
@@ -989,6 +992,10 @@ var MONTHS_SHORT=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','N
 function fmtTS(ts){if(!ts)return '';var d=new Date(ts);var h=d.getHours(),m=d.getMinutes(),ap=h>=12?'PM':'AM',h12=h%12||12;
   return MONTHS_SHORT[d.getMonth()]+' '+d.getDate()+', '+h12+':'+(m<10?'0':'')+m+ap;}
 function sprintDates(n){var s=sprintDef(n);if(!s||(!s.start&&!s.end))return '';if(s.start&&s.end)return fmtD(s.start)+' \u2013 '+fmtD(s.end);return fmtD(s.start||s.end);}
+// Shared label for sprint <option>s \u2014 name plus its start\u2013end date range
+// (when set), so every sprint picker in the app shows dates, not just the
+// Settings editor and the analytics panel.
+function sprintOptLabel(s){var dt=sprintDates(s.n);return esc(s.name)+(dt?' \u00b7 '+esc(dt):'');}
 function firstSprint(){return (SPRINT_DEFS[0]&&SPRINT_DEFS[0].n)||1;}
 function lastSprint(){return (SPRINT_DEFS.length?SPRINT_DEFS[SPRINT_DEFS.length-1].n:firstSprint());}
 function saveSprints(){return setSetting('sprints',SPRINT_DEFS);}
@@ -1139,6 +1146,30 @@ function isDone(c){return !!c.completed;}
 function initials(n){return n?n.split(/\s+/).map(function(w){return w.charAt(0);}).join('').slice(0,2).toUpperCase():'';}
 function isAdmin(){return !SHARE_MODE&&CURRENT_USER===ADMIN_NAME&&AUTHED;}
 function findUser(name){for(var i=0;i<USERS.length;i++)if(USERS[i].name===name)return USERS[i];return null;}
+// Avatar: a small (160px) resized photo stored per user, alongside their role
+// etc, in the same USERS record that already persists through saveUsers().
+// Falls back to the initials bubble wherever no photo has been set.
+function avaHtml(name,cls){var u=findUser(name);var c='uw-ava'+(cls?(' '+cls):'');
+  return (u&&u.avatar)?'<span class="'+c+' photo"><img src="'+u.avatar+'" alt=""></span>':'<span class="'+c+'">'+esc(initials(name))+'</span>';}
+var AVATAR_TARGET_USER='';
+function ensureAvatarInput(){var inp=document.getElementById('avaFileInput');if(inp)return inp;
+  inp=document.createElement('input');inp.type='file';inp.accept='image/*';inp.id='avaFileInput';inp.style.display='none';
+  document.body.appendChild(inp);
+  inp.addEventListener('change',function(){var f=this.files&&this.files[0];this.value='';if(f&&AVATAR_TARGET_USER)setUserAvatar(AVATAR_TARGET_USER,f);});
+  return inp;}
+function pickAvatarFor(name){AVATAR_TARGET_USER=name;ensureAvatarInput().click();}
+function refreshCrWhoAva(name){
+  // The dashboard's own "signed in as" banner (.cr-who) builds its avatar
+  // once as part of the page's initial render, not on every repaint, so a
+  // photo saved while that banner is already on screen needs this one
+  // direct patch rather than waiting on the next full page/tab render.
+  var old=document.querySelector('.cr-who .uw-ava');if(!old)return;
+  var extra=old.className.split(/\s+/).filter(function(c){return c&&c!=='uw-ava'&&c!=='photo';}).join(' ');
+  old.outerHTML=avaHtml(name,extra);}
+function setUserAvatar(name,file){if(!/^image\//.test(file.type)){toast('Pick an image file');return;}
+  return resizeImage(file,160).then(function(d){var u=findUser(name);if(!u)return;u.avatar=d;return saveUsers();})
+    .then(function(){renderUserWidget();if(el('securityMount'))renderSecurity();if(name===CURRENT_USER)refreshCrWhoAva(name);toast((name===CURRENT_USER?'Your':esc(name)+'’s')+' photo updated');})
+    .catch(function(err){toast('Could not update photo: '+(err&&err.message?err.message:err));});}
 function userRole(name){if(name===ADMIN_NAME)return 'Admin';var u=findUser(name);return u?u.role:'Viewer';}
 function userNames(){return USERS.map(function(u){return u.name;});}
 // Reviewers don't model or texture anything, so they shouldn't clutter a
@@ -1378,17 +1409,18 @@ function renderUserWidget(){var slot=el('userSlot');if(!slot)return;
   var role=CURRENT_USER?myRole():'';
   var roleTag=CURRENT_USER?'<span class="uw-role'+(role==='Admin'?' admin':'')+'">'+esc(role)+'</span>':'';
   var label=CURRENT_USER?'<span class="uw-name">'+esc(CURRENT_USER)+'</span>'+roleTag:'<span class="uw-name muted">Sign in</span>';
-  slot.innerHTML='<button class="uw-btn" id="uwBtn"><span class="uw-ava'+(isAdmin()?' adm':'')+'">'+(CURRENT_USER?esc(initials(CURRENT_USER)):'\u263a')+'</span>'+label+'<span class="uw-caret">\u25be</span></button><div class="uw-menu hidden" id="uwMenu"></div>';
+  slot.innerHTML='<button class="uw-btn" id="uwBtn">'+(CURRENT_USER?avaHtml(CURRENT_USER,isAdmin()?'adm':''):'<span class="uw-ava">\u263a</span>')+label+'<span class="uw-caret">\u25be</span></button><div class="uw-menu hidden" id="uwMenu"></div>';
   var menu=el('uwMenu');
   menu.innerHTML='<div class="uw-head">Sign in as</div>'
-    +USERS.map(function(u){var lk=(u.name!==ADMIN_NAME&&u.hash)?' \ud83d\udd12':'';return '<button class="uw-item'+(u.name===CURRENT_USER?' active':'')+'" data-user="'+esc(u.name)+'"><span class="uw-ava sm">'+esc(initials(u.name))+'</span><span style="flex:1">'+esc(u.name)+lk+'</span><span class="uw-mini">'+esc(u.name===ADMIN_NAME?'Admin':u.role)+'</span></button>';}).join('')
+    +USERS.map(function(u){var lk=(u.name!==ADMIN_NAME&&u.hash)?' \ud83d\udd12':'';return '<button class="uw-item'+(u.name===CURRENT_USER?' active':'')+'" data-user="'+esc(u.name)+'">'+avaHtml(u.name,'sm')+'<span style="flex:1">'+esc(u.name)+lk+'</span><span class="uw-mini">'+esc(u.name===ADMIN_NAME?'Admin':u.role)+'</span></button>';}).join('')
     +'<div class="uw-sep"></div>'
-    +(CURRENT_USER?'<button class="uw-item" data-user="">Sign out</button>':'')
+    +(CURRENT_USER?'<button class="uw-item" id="uwChangePhoto">\ud83d\udcf7 Change my photo</button><button class="uw-item" data-user="">Sign out</button>':'')
     +(isAdmin()?'<button class="uw-item" id="uwManage">Users &amp; access\u2026</button>':'');
   el('uwBtn').addEventListener('click',function(e){e.stopPropagation();menu.classList.toggle('hidden');});
   document.addEventListener('click',function(){menu.classList.add('hidden');});
   menu.addEventListener('click',function(e){e.stopPropagation();});
   menu.querySelectorAll('[data-user]').forEach(function(b){b.addEventListener('click',function(){pickUser(b.getAttribute('data-user'));menu.classList.add('hidden');});});
+  var cp=el('uwChangePhoto');if(cp)cp.addEventListener('click',function(){menu.classList.add('hidden');pickAvatarFor(CURRENT_USER);});
   var mg=el('uwManage');if(mg)mg.addEventListener('click',function(){menu.classList.add('hidden');dashTab='security';if(location.hash.indexOf('dashboard')<0)location.hash='#/dashboard';else renderDashboard();});
 }
 function pickUser(u){
@@ -1595,7 +1627,7 @@ var clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',animat
 function renderClan(clanId){var m=CLAN_META[clanId];if(!m){location.hash='#/';return;}applyClanTheme(m);
   clanState={search:'',arch:'',type:'',sprint:'',modeler:'',texturer:'',animated:false,hasImages:false,clan:clanId};
   var switcher=CLAN_ORDER.map(function(id){return '<a href="#/clan/'+id+'" class="'+(id===clanId?'active':'')+'">'+esc(CLAN_META[id].name)+'</a>';}).join('');
-  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'">'+sprintOptLabel(s)+'</option>';}).join('');
   var archChips=ARCHES.map(function(a){return '<button class="chip" data-arch="'+a+'" aria-pressed="false">'+a+'</button>';}).join('');
   var typeChips=TYPES.map(function(t){return '<button class="chip" data-type="'+t+'" aria-pressed="false">'+t+'</button>';}).join('');
   var modelerOpts='<option value="">All modelers</option>'+artistNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
@@ -1718,7 +1750,7 @@ function renderTasksPage(){resetTheme();
   taskState={search:'',category:'',sprint:'',modeler:'',texturer:''};
   var catSet={};TASKS.forEach(function(t){if(t.category)catSet[t.category]=1;});
   var catOpts='<option value="">All categories</option>'+Object.keys(catSet).sort().map(function(cat){return '<option>'+esc(cat)+'</option>';}).join('');
-  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'">'+sprintOptLabel(s)+'</option>';}).join('');
   var modelerOpts='<option value="">All modelers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
   var texturerOpts='<option value="">All texturers</option>'+userNames().map(function(n){return '<option>'+esc(n)+'</option>';}).join('');
   APP.innerHTML='<header class="hero"><div class="wrap">'+memBanner()
@@ -1745,7 +1777,7 @@ function matchTaskState(t){
   if(taskState.texturer&&texturedOf(t)!==taskState.texturer)return false;
   if(taskState.search){var s=taskState.search;if(t.name.toLowerCase().indexOf(s)<0&&(t.category||'').toLowerCase().indexOf(s)<0&&sprintName(t.sprint||0).toLowerCase().indexOf(s)<0)return false;}
   return true;}
-function sprintGroupHeader(g){return '<h3 class="sprint-group-h">'+esc(sprintName(g.n))+(g.cur?' <span class="chip on sprint-cur-tag">Current</span>':'')
+function sprintGroupHeader(g){var dt=sprintDates(g.n);return '<h3 class="sprint-group-h">'+esc(sprintName(g.n))+(dt?' <span class="sprint-group-dates mono">'+esc(dt)+'</span>':'')+(g.cur?' <span class="chip on sprint-cur-tag">Current</span>':'')
     +'<span class="hint sprint-group-count">'+g.items.length+' task'+(g.items.length===1?'':'s')+'</span></h3>';}
 // Sub-header for the artist cluster nested inside a sprint group (see
 // groupByArtistOrdered) — one notch down from sprintGroupHeader so the
@@ -1822,7 +1854,7 @@ function renderDashboard(){resetTheme();
   if(!tabs.some(function(t){return t.k===dashTab;}))dashTab='roster';
   var tabBar='<div class="cr-tabs">'+tabs.map(function(t){return '<button class="cr-tab'+(t.k===dashTab?' on':'')+'" data-tab="'+t.k+'">'+esc(t.label)+'</button>';}).join('')+'</div>';
   var access=admin?'Full access':canEditChars()?'Can add, edit & upload for characters (no delete)':canReview()?'Can review & update status':canStatus()?'Can update production status':'Read-only access';
-  var who='<div class="cr-who"><span class="uw-ava'+(admin?' adm':'')+'">'+esc(initials(CURRENT_USER))+'</span><div class="cr-whotext"><b>'+esc(CURRENT_USER)+'</b><span class="cr-role">'+esc(role)+' · '+access+'</span></div><span class="spacer"></span><button class="btn ghost sm" id="btnLock">Sign out</button></div>';
+  var who='<div class="cr-who">'+avaHtml(CURRENT_USER,admin?'adm':'')+'<div class="cr-whotext"><b>'+esc(CURRENT_USER)+'</b><span class="cr-role">'+esc(role)+' · '+access+'</span></div><span class="spacer"></span><button class="btn ghost sm" id="btnLock">Sign out</button></div>';
   APP.innerHTML='<header class="dash-head"><div class="wrap"><div class="eyebrow">Control Room</div><h1 class="h-title">Roster Dashboard</h1>'
     +'<p class="h-sub">Manage characters and production status'+(admin?', plus analytics, the front page, team access and settings.':'.')+'</p></div></header>'
     +'<main class="wrap wide">'+memBanner()+who+tabBar+'<div id="crContent"></div></main>';
@@ -1875,7 +1907,7 @@ function showShareTab(t){var c=el('crContent');if(!c)return;
 function renderRoster(c){var admin=canEditChars();
   if(!DASH_SPRINT_INITED){DASH_SPRINT_INITED=true;if(dash.sprint===''||dash.sprint==null)dash.sprint=currentSprintNum();}
   var clanChips='<button class="chip" data-dclan="" aria-pressed="'+(dash.clan?'false':'true')+'">All clans</button>'+CLAN_ORDER.map(function(id){return '<button class="chip" data-dclan="'+id+'" aria-pressed="'+(dash.clan===id?'true':'false')+'"><span class="clan-dot" style="background:'+CLAN_META[id].accent+'"></span>'+esc(CLAN_META[id].name)+'</button>';}).join('');
-  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+(String(dash.sprint)===String(s.n)?' selected':'')+'>'+esc(s.name)+(s.n===currentSprintNum()?' (current)':'')+'</option>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+(String(dash.sprint)===String(s.n)?' selected':'')+'>'+sprintOptLabel(s)+(s.n===currentSprintNum()?' (current)':'')+'</option>';}).join('');
   var artistOpts='<option value="">All artists</option>'+userNames().map(function(n){return '<option'+(dash.artist===n?' selected':'')+'>'+esc(n)+'</option>';}).join('');
   c.innerHTML='<div class="dash-toolbar">'+(admin?'<button class="btn accent" id="btnNew">+ New character</button>':'')
       +'<div class="search" style="max-width:240px"><span class="mono" style="color:var(--bark)">\u2315</span><input id="dSearch" type="search" placeholder="Search units\u2026" value="'+esc(dash.search)+'"></div>'
@@ -1955,37 +1987,55 @@ function bindBulk(shown){
   APP.querySelectorAll('[data-bulk]').forEach(function(b){b.addEventListener('click',function(){var a=b.getAttribute('data-bulk');
     if(a==='done')bulkComplete(true);else if(a==='undone')bulkComplete(false);else if(a==='clear'){selected={};paintDashList();}});});
   var bs=el('bulkSprint');if(bs)bs.addEventListener('change',function(){if(bs.value)bulkSprint(Number(bs.value));});}
-function toggleComplete(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;c.completed=!c.completed;c.updatedAt=Date.now();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast(c.completed?'Marked completed':'Marked incomplete');paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
+function toggleComplete(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
+  // Optimistic update: flip the (already-shared) object and repaint/toast
+  // immediately, then persist in the background. mergeFreshList's updatedAt
+  // comparison protects this from being clobbered by a stale live-poll that
+  // lands before the save does, so it's safe to show the result before the
+  // network round-trip finishes — a genuine save failure rolls it back.
+  var prev=c.completed;c.completed=!c.completed;c.updatedAt=Date.now();
+  toast(c.completed?'Marked completed':'Marked incomplete');paintDashList();
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);}).catch(function(err){
+    c.completed=prev;c.updatedAt=Date.now();toast('Update failed: '+err);paintDashList();});}
 var selected={};
 function reviewAct(id,act){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
   c.review=c.review||{status:'',count:0,redos:0};
+  var prevReview=Object.assign({},c.review),prevCompleted=c.completed;
   if(act==='submit'){if(!canStatus())return;c.review.status='in_review';}
   else if(act==='approve'){if(!canReview())return;c.review.status='approved';c.review.count++;}
   else if(act==='reject'){if(!canReview())return;c.review.status='rejected';c.review.count++;c.review.redos++;c.completed=false;}
   c.updatedAt=Date.now();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);
-    toast(act==='submit'?'Submitted for review':act==='approve'?'Review approved':'Rejected \u2014 redo requested');
+  toast(act==='submit'?'Submitted for review':act==='approve'?'Review approved':'Rejected \u2014 redo requested');
+  if(el('editorMount')){if(edit&&edit.id===id){if(isAdmin())renderEditor(edit);else renderStatusEditor(edit,el('editorMount'));}}
+  paintDashList();
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);}).catch(function(err){
+    c.review=prevReview;c.completed=prevCompleted;c.updatedAt=Date.now();
+    toast('Update failed: '+err);
     if(el('editorMount')){if(edit&&edit.id===id){if(isAdmin())renderEditor(edit);else renderStatusEditor(edit,el('editorMount'));}}
-    paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
+    paintDashList();});}
 function selIds(){return Object.keys(selected).filter(function(id){return selected[id];});}
-function setSprint(id,val){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;c.sprint=val;c.updatedAt=Date.now();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast(c.name+' → '+sprintName(val));
-    // Setting a character's sprint from here is already saved, so jumping
-    // straight to that sprint's Tasks view (rather than repainting the
-    // roster the admin just left) is a safe, immediate next step — not the
-    // mid-edit character form, where navigating away could lose unsaved
-    // changes to other fields.
-    taskDash.sprint=val;if(typeof setTab==='function'&&el('crContent'))setTab('tasks');else paintDashList();
-  }).catch(function(err){toast('Update failed: '+err);});}
+function setSprint(id,val){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
+  var prev=c.sprint;c.sprint=val;c.updatedAt=Date.now();
+  toast(c.name+' → '+sprintName(val));
+  // Setting a character's sprint from here is already saved (optimistically),
+  // so jumping straight to that sprint's Tasks view (rather than repainting
+  // the roster the admin just left) is a safe, immediate next step — not the
+  // mid-edit character form, where navigating away could lose unsaved
+  // changes to other fields.
+  taskDash.sprint=val;if(typeof setTab==='function'&&el('crContent'))setTab('tasks');else paintDashList();
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);}).catch(function(err){
+    c.sprint=prev;c.updatedAt=Date.now();toast('Update failed: '+err);paintDashList();});}
 function bulkComplete(val){var ids=selIds();if(!ids.length){toast('Select characters first');return;}
-  var ops=[],changed=[];ids.forEach(function(id){var c=CHARS.find(function(x){return x.id===id;});if(c){c.completed=val;c.updatedAt=Date.now();ops.push(putChar(c));changed.push(c);}});
-  Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});toast((val?'Marked ':'Unmarked ')+changed.length+' completed');paintDashList();}).catch(function(err){toast('Update failed: '+err);});}
+  var ops=[],changed=[],prevVals=[];ids.forEach(function(id){var c=CHARS.find(function(x){return x.id===id;});if(c){prevVals.push({c:c,val:c.completed});c.completed=val;c.updatedAt=Date.now();ops.push(putChar(c));changed.push(c);}});
+  toast((val?'Marked ':'Unmarked ')+changed.length+' completed');paintDashList();
+  Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});}).catch(function(err){
+    prevVals.forEach(function(p){p.c.completed=p.val;});toast('Update failed: '+err);paintDashList();});}
 function bulkSprint(val){var ids=selIds();if(!ids.length){toast('Select characters first');return;}
-  var ops=[],changed=[];ids.forEach(function(id){var c=CHARS.find(function(x){return x.id===id;});if(c){c.sprint=val;c.updatedAt=Date.now();ops.push(putChar(c));changed.push(c);}});
-  Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});toast('Moved '+changed.length+' to '+sprintName(val));
-    taskDash.sprint=val;if(typeof setTab==='function'&&el('crContent'))setTab('tasks');else paintDashList();
-  }).catch(function(err){toast('Update failed: '+err);});}
+  var ops=[],changed=[],prevVals=[];ids.forEach(function(id){var c=CHARS.find(function(x){return x.id===id;});if(c){prevVals.push({c:c,val:c.sprint});c.sprint=val;c.updatedAt=Date.now();ops.push(putChar(c));changed.push(c);}});
+  toast('Moved '+changed.length+' to '+sprintName(val));
+  taskDash.sprint=val;if(typeof setTab==='function'&&el('crContent'))setTab('tasks');else paintDashList();
+  Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});}).catch(function(err){
+    prevVals.forEach(function(p){p.c.sprint=p.val;});toast('Update failed: '+err);paintDashList();});}
 
 /* ---------- analytics ---------- */
 function toggleAnalytics(){var m=el('analyticsMount');if(!m)return;if(m.dataset.open){m.dataset.open='';m.innerHTML='';return;}m.dataset.open='1';renderAnalytics(m);}
@@ -2015,7 +2065,7 @@ function renderSecurity(){var m=el('securityMount');if(!m)return;
     var pwBtn=isW?'':'<button class="btn ghost xs" data-setpw="'+esc(u.name)+'">'+(u.hash?'Reset':'Set')+'</button>'+(u.hash?'<button class="btn ghost xs" data-clrpw="'+esc(u.name)+'">Clear</button>':'');
     var rm=isW?'':'<button class="btn danger xs" data-rmuser="'+esc(u.name)+'" title="Remove">\u2715</button>';
     var rn=isW?'':'<button class="btn ghost xs" data-rename="'+esc(u.name)+'" title="Rename">Rename</button>';
-    return '<tr><td><span class="uw-ava sm">'+esc(initials(u.name))+'</span> '+esc(u.name)+' '+rn+'</td><td>'+roleSel+'</td><td class="sec-pwcell">'+pw+' '+pwBtn+'</td><td style="text-align:right">'+rm+'</td></tr>';}).join('');
+    return '<tr><td>'+avaHtml(u.name,'sm')+' <button class="btn ghost xs" data-setava="'+esc(u.name)+'" title="Change photo">📷</button> '+esc(u.name)+' '+rn+'</td><td>'+roleSel+'</td><td class="sec-pwcell">'+pw+' '+pwBtn+'</td><td style="text-align:right">'+rm+'</td></tr>';}).join('');
   var strays=strayNames();
   var strayBlock=!strays.length?'':('<div class="divider"></div>'
     +'<div class="hint" style="margin:0 0 8px"><b>Old names still on some records</b> \u2014 these don\u2019t match anyone in the list above, usually left over from a rename that didn\u2019t reach every record. Merge each into whoever it should actually be.</div>'
@@ -2043,6 +2093,7 @@ function renderSecurity(){var m=el('securityMount');if(!m)return;
   m.querySelectorAll('[data-setpw]').forEach(function(b){b.addEventListener('click',function(){pwFlow(b.getAttribute('data-setpw'));});});
   m.querySelectorAll('[data-clrpw]').forEach(function(b){b.addEventListener('click',function(){var u=findUser(b.getAttribute('data-clrpw'));if(u){delete u.hash;delete u.salt;saveUsers().then(function(){toast('Password cleared');renderSecurity();renderUserWidget();});}});});
   m.querySelectorAll('[data-rename]').forEach(function(b){b.addEventListener('click',function(){renameFlow(b.getAttribute('data-rename'));});});
+  m.querySelectorAll('[data-setava]').forEach(function(b){b.addEventListener('click',function(){pickAvatarFor(b.getAttribute('data-setava'));});});
   el('secAdd').addEventListener('click',function(){var v=el('secNewName').value.trim();if(!v)return;if(findUser(v)){toast('That name already exists');return;}USERS.push({name:v,role:el('secNewRole').value});saveUsers().then(function(){toast('User added');renderSecurity();renderUserWidget();});});
   el('secAdminSave').addEventListener('click',function(){var p=el('secAdminPw').value;if(p.length<4){toast('Use at least 4 characters');return;}
     api('auth/set-password',{method:'POST',body:{newPassword:p}}).then(function(r){HAS_ADMIN_PW=true;if(r&&r.token)adminTokenSet(r.token);toast('Admin password updated');el('secAdminPw').value='';}).catch(function(){toast('Could not update password');});});
@@ -2221,7 +2272,7 @@ var taskDash={search:'',category:'',sprint:'',artist:'',onlyArt:false};
 function renderTaskDash(c){if(!c)return;var admin=canEditChars();
   var catSet={};TASKS.forEach(function(t){if(t.category)catSet[t.category]=1;});
   var catOpts='<option value="">All categories</option>'+Object.keys(catSet).sort().map(function(cat){return '<option'+(taskDash.category===cat?' selected':'')+'>'+esc(cat)+'</option>';}).join('');
-  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+(String(taskDash.sprint)===String(s.n)?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
+  var sprintOpts='<option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+(String(taskDash.sprint)===String(s.n)?' selected':'')+'>'+sprintOptLabel(s)+'</option>';}).join('');
   var artistOpts='<option value="">All assignees</option>'+userNames().map(function(n){return '<option'+(taskDash.artist===n?' selected':'')+'>'+esc(n)+'</option>';}).join('');
   c.innerHTML='<div class="dash-toolbar">'+(admin?'<button class="btn accent" id="btnNewTask">+ New task</button>':'')+(isAdmin()?'<button class="btn ghost" id="btnAddCharTask">+ Add existing character</button>':'')
       +'<div class="search" style="max-width:240px"><span class="mono" style="color:var(--bark)">⌕</span><input id="tSearch" type="search" placeholder="Search tasks…" value="'+esc(taskDash.search)+'"></div>'
@@ -2299,10 +2350,15 @@ function paintTaskList(){var mount=el('taskList');if(!mount)return;var canS=canS
   mount.querySelectorAll('[data-tdone]').forEach(function(b){b.addEventListener('click',function(){
     var id=b.getAttribute('data-tdone');
     if(b.getAttribute('data-ischar')==='1')toggleCharInTasks(id);else toggleTaskComplete(id);});});}
-function toggleTaskComplete(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;t.completed=!t.completed;t.updatedAt=Date.now();
-  putTask(t).then(loadCaches).then(function(){toast(t.completed?'Marked completed':'Marked incomplete');paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
-function toggleCharInTasks(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;c.completed=!c.completed;c.updatedAt=Date.now();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast(c.completed?'Marked completed':'Marked incomplete');paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
+function toggleTaskComplete(id){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
+  var prev=t.completed;t.completed=!t.completed;t.updatedAt=Date.now();
+  toast(t.completed?'Marked completed':'Marked incomplete');paintTaskList();
+  putTask(t).then(loadCaches).catch(function(err){t.completed=prev;t.updatedAt=Date.now();toast('Update failed: '+err);paintTaskList();});}
+function toggleCharInTasks(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
+  var prev=c.completed;c.completed=!c.completed;c.updatedAt=Date.now();
+  toast(c.completed?'Marked completed':'Marked incomplete');paintTaskList();
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);}).catch(function(err){
+    c.completed=prev;c.updatedAt=Date.now();toast('Update failed: '+err);paintTaskList();});}
 /* ---------- adding an existing clan character into the Tasks list ---------- */
 var addCharState={search:''};
 function toggleAddCharPanel(){var m=el('addCharMount');if(!m)return;if(m.dataset.open){m.dataset.open='';m.innerHTML='';return;}m.dataset.open='1';addCharState.search='';renderAddCharPanel();}
@@ -2326,12 +2382,17 @@ function paintAddCharResults(){var box=el('addCharResults');if(!box)return;
     }).join(''):'<div class="hint">'+(avail.length?'No match for that search.':'Every character is already in Tasks.')+'</div>')
     +(avail.length>shown.length?'<div class="hint" style="margin-top:6px">+'+(avail.length-shown.length)+' more — narrow your search to see them.</div>':'');
   box.querySelectorAll('[data-addchar]').forEach(function(b){b.addEventListener('click',function(){pinCharToTasks(b.getAttribute('data-addchar'));});});}
-function pinCharToTasks(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;c.pinnedToTasks=true;c.updatedAt=Date.now();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast('"'+c.name+'" added to Tasks');paintTaskList();paintAddCharResults();}).catch(function(err){toast('Update failed: '+err);});}
+function pinCharToTasks(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
+  c.pinnedToTasks=true;c.updatedAt=Date.now();
+  toast('"'+c.name+'" added to Tasks');paintTaskList();paintAddCharResults();
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);}).catch(function(err){
+    c.pinnedToTasks=false;c.updatedAt=Date.now();toast('Update failed: '+err);paintTaskList();paintAddCharResults();});}
 function unpinCharFromTasks(id){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
   if(!confirm('Remove "'+c.name+'" from Tasks? The character itself stays untouched in its clan.'))return;
   c.pinnedToTasks=false;c.updatedAt=Date.now();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);toast('Removed from Tasks');paintTaskList();paintAddCharResults();}).catch(function(err){toast('Update failed: '+err);});}
+  toast('Removed from Tasks');paintTaskList();paintAddCharResults();
+  putChar(c).then(loadCaches).then(function(){syncUpsert(c);}).catch(function(err){
+    c.pinnedToTasks=true;c.updatedAt=Date.now();toast('Update failed: '+err);paintTaskList();paintAddCharResults();});}
 function quickDeleteTask(id){if(!isAdmin())return;var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
   if(!confirm('Remove "'+t.name+'" and its images? This cannot be undone.'))return;
   var ops=[delTask(id)];(IMAGES[id]||[]).forEach(function(im){ops.push(delImg(im.id));});
@@ -2429,14 +2490,19 @@ function taskReviewBlock(id){var t=TASKS.find(function(x){return x.id===id;});if
 function bindReviewTask(scope){(scope||document).querySelectorAll('[data-treview]').forEach(function(b){b.addEventListener('click',function(){reviewActTask(b.getAttribute('data-trid'),b.getAttribute('data-treview'));});});}
 function reviewActTask(id,act){var t=TASKS.find(function(x){return x.id===id;});if(!t)return;
   t.review=t.review||{status:'',count:0,redos:0};
+  var prevReview=Object.assign({},t.review),prevCompleted=t.completed;
   if(act==='submit'){if(!canStatus())return;t.review.status='in_review';}
   else if(act==='approve'){if(!canReview())return;t.review.status='approved';t.review.count++;}
   else if(act==='reject'){if(!canReview())return;t.review.status='rejected';t.review.count++;t.review.redos++;t.completed=false;}
   t.updatedAt=Date.now();
-  putTask(t).then(loadCaches).then(function(){
-    toast(act==='submit'?'Submitted for review':act==='approve'?'Review approved':'Rejected — redo requested');
+  toast(act==='submit'?'Submitted for review':act==='approve'?'Review approved':'Rejected — redo requested');
+  if(el('taskEditorMount')){if(taskEdit&&taskEdit.id===id){if(isAdmin())renderTaskEditor(taskEdit);else renderTaskStatusEditor(taskEdit,el('taskEditorMount'));}}
+  paintTaskList();
+  putTask(t).then(loadCaches).catch(function(err){
+    t.review=prevReview;t.completed=prevCompleted;t.updatedAt=Date.now();
+    toast('Update failed: '+err);
     if(el('taskEditorMount')){if(taskEdit&&taskEdit.id===id){if(isAdmin())renderTaskEditor(taskEdit);else renderTaskStatusEditor(taskEdit,el('taskEditorMount'));}}
-    paintTaskList();}).catch(function(err){toast('Update failed: '+err);});}
+    paintTaskList();});}
 function renderTaskStatusEditor(e,mount){var img=null;var t=TASKS.find(function(x){return x.id===e.id;});if(t)img=primaryOf(t);var editable=canStatus();var dis=editable?'':' disabled';
   var statusBoxes=STAGES.map(function(st){return '<label class="statbox"><input type="checkbox" data-tst="'+st.key+'"'+(e.status[st.key]?' checked':'')+dis+'> '+esc(st.label)+'</label>';}).join('');
   mount.innerHTML='<div class="editor"><h3>'+(editable?'Update status':'View')+'</h3><div class="esub">'+(canReview()?'Review and update production status':editable?'You can update production status and add images':'Read-only ('+esc(myRole())+')')+'</div>'
@@ -2485,7 +2551,8 @@ function paintTaskThumbs(){var mount=el('timgThumbs');if(!mount)return;if(!taskE
     if(rm&&taskEdit.primaryId===rm.id)taskEdit.primaryId=taskEdit.images.length?taskEdit.images[0].id:null;paintTaskThumbs();});});
   mount.querySelectorAll('[data-tstar]').forEach(function(b){b.addEventListener('click',function(){taskEdit.primaryId=taskEdit.images[+b.getAttribute('data-tstar')].id;paintTaskThumbs();});});}
 function addTaskFiles(files){if(!taskEdit)return;var arr=Array.prototype.slice.call(files).filter(function(f){return /^image\//.test(f.type);});if(!arr.length)return;
-  Promise.all(arr.map(function(f){return resizeImage(f).then(function(d){if(taskEdit)taskEdit.images.push({id:uid(),name:f.name,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false});});})).then(function(){if(!taskEdit)return;if(!taskEdit.primaryId&&taskEdit.images.length)taskEdit.primaryId=taskEdit.images[0].id;paintTaskThumbs();});}
+  var used={};taskEdit.images.forEach(function(im){if(im.name)used[im.name]=true;});
+  Promise.all(arr.map(function(f){return resizeImage(f).then(function(d){if(!taskEdit)return;var nm=renamedImageName(taskEdit.name,d,used);taskEdit.images.push({id:uid(),name:nm,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false});});})).then(function(){if(!taskEdit)return;if(!taskEdit.primaryId&&taskEdit.images.length)taskEdit.primaryId=taskEdit.images[0].id;paintTaskThumbs();});}
 function saveTaskEdit(){if(!taskEdit.name||!String(taskEdit.name).trim()){toast('Name is required');return;}
   var oldT=taskEdit.id?TASKS.find(function(x){return x.id===taskEdit.id;}):null;
   var id=taskEdit.id||('task-'+uid());
@@ -2553,7 +2620,7 @@ var scoresState={sprint:null};
 function renderScoresDash(c){if(!c)return;
   if(!SPRINT_DEFS.length){c.innerHTML='<div class="empty-state"><div class="glyph">∅</div><p>No sprints set up yet — add one in Settings &amp; sync → Sprints.</p></div>';return;}
   if(scoresState.sprint==null||!sprintDef(scoresState.sprint))scoresState.sprint=lastSprint();
-  var sprintOpts=sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+(scoresState.sprint===s.n?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
+  var sprintOpts=sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'"'+(scoresState.sprint===s.n?' selected':'')+'>'+sprintOptLabel(s)+'</option>';}).join('');
   var dt=sprintDates(scoresState.sprint);
   c.innerHTML='<div class="dash-toolbar"><label class="filt"><span>Sprint</span><select id="scoreSprint" class="filt-sel">'+sprintOpts+'</select></label>'
       +(dt?'<span class="hint">'+esc(dt)+'</span>':'')+'<span style="flex:1"></span>'
@@ -2606,7 +2673,7 @@ function renderSettingsInner(mount){if(!mount)return;
       +'<div class="panel-row">'
         +'<select id="shrTab"><option value="roster">Roster</option><option value="tasks">Tasks</option><option value="scores">Scores</option></select>'
         +'<select id="shrClan"><option value="">All clans</option>'+CLAN_ORDER.map(function(id){return '<option value="'+id+'">'+esc(CLAN_META[id].name)+'</option>';}).join('')+'</select>'
-        +'<select id="shrSprint"><option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'">'+esc(s.name)+'</option>';}).join('')+'</select>'
+        +'<select id="shrSprint"><option value="">All sprints</option>'+sprintsNewestFirst().map(function(s){return '<option value="'+s.n+'">'+sprintOptLabel(s)+'</option>';}).join('')+'</select>'
         +'<button class="btn accent sm" id="shrCopy">Copy share link</button><button class="btn ghost sm" id="shrOpen">Preview</button>'
       +'</div><div id="shrUrlOut" class="hint" style="word-break:break-all"></div></div>'
     +'<div class="divider"></div>'
@@ -2990,7 +3057,7 @@ function addWeaponFile(files){if(!edit)return;var arr=Array.prototype.slice.call
   // weaponOpThunks for where that actually gets written on save.
   edit.weaponArchiveOps=edit.weaponArchiveOps||[];
   if(edit.weaponImage&&edit.weaponImage.existing)edit.weaponArchiveOps.push({id:edit.weaponImage.id,archived:true});
-  resizeImage(arr[0]).then(function(d){if(!edit)return;edit.weaponImage={id:uid(),name:arr[0].name,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false};paintWeaponThumb();});}
+  resizeImage(arr[0]).then(function(d){if(!edit)return;var nm=renamedImageName((edit.name||'untitled')+' (weapon)',d,{});edit.weaponImage={id:uid(),name:nm,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false};paintWeaponThumb();});}
 /* ---------- change history (who updated what) ---------- */
 function pushHistory(c,note){if(!note)return;c.history=(c.history||[]).slice();c.history.unshift({ts:Date.now(),user:CURRENT_USER||'Unknown',action:note});if(c.history.length>40)c.history.length=40;}
 function historyNote(oldStatus,newStatus,oldCompleted,newCompleted,added,removed){var parts=[];
@@ -3067,7 +3134,8 @@ function paintThumbs(){var mount=el('imgThumbs');if(!mount)return;if(!edit.image
     if(rm&&edit.primaryId===rm.id)edit.primaryId=edit.images.length?edit.images[0].id:null;paintThumbs();});});
   mount.querySelectorAll('[data-star]').forEach(function(b){b.addEventListener('click',function(){edit.primaryId=edit.images[+b.getAttribute('data-star')].id;paintThumbs();});});}
 function addFiles(files){if(!edit)return;var arr=Array.prototype.slice.call(files).filter(function(f){return /^image\//.test(f.type);});if(!arr.length)return;
-  Promise.all(arr.map(function(f){return resizeImage(f).then(function(d){if(edit)edit.images.push({id:uid(),name:f.name,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false});});})).then(function(){if(!edit)return;if(!edit.primaryId&&edit.images.length)edit.primaryId=edit.images[0].id;paintThumbs();});}
+  var used={};edit.images.forEach(function(im){if(im.name)used[im.name]=true;});
+  Promise.all(arr.map(function(f){return resizeImage(f).then(function(d){if(!edit)return;var nm=renamedImageName(edit.name,d,used);edit.images.push({id:uid(),name:nm,data:d,by:CURRENT_USER||'',ts:Date.now(),existing:false});});})).then(function(){if(!edit)return;if(!edit.primaryId&&edit.images.length)edit.primaryId=edit.images[0].id;paintThumbs();});}
 function resizeImage(file,max){max=max||900;return new Promise(function(res){var r=new FileReader();r.onload=function(){var img=new Image();img.onload=function(){var w=img.width,hh=img.height,sc=Math.min(1,max/Math.max(w,hh)),cw=Math.round(w*sc),ch=Math.round(hh*sc);var cv=document.createElement('canvas');cv.width=cw;cv.height=ch;cv.getContext('2d').drawImage(img,0,0,cw,ch);try{res(cv.toDataURL('image/jpeg',0.85));}catch(e){res(r.result);}};img.onerror=function(){res(r.result);};img.src=r.result;};r.readAsDataURL(file);});}
 function parseStats(s){if(!s)return null;var p=String(s).split('/');if(p.length!==4)return null;var o=p.map(function(x){return parseInt(x,10);});return o.some(isNaN)?null:o;}
 function saveEdit(){if(!edit.name||!String(edit.name).trim()){toast('Name is required');return;}
@@ -3194,6 +3262,15 @@ function exportExcel(){toast('Preparing Excel export…');
 function sanitizeFsName(s){return String(s||'').replace(/[\\/:*?"<>|]+/g,'_').replace(/\s+/g,' ').trim()||'untitled';}
 function extFromDataUrl(dataUrl){var m=/^data:([^;,]+)/.exec(dataUrl||'');var ct=m?m[1]:'';
   if(ct.indexOf('png')>=0)return '.png';if(ct.indexOf('jpeg')>=0||ct.indexOf('jpg')>=0)return '.jpg';if(ct.indexOf('webp')>=0)return '.webp';if(ct.indexOf('gif')>=0)return '.gif';return '';}
+// Uploaded images are renamed to the character/task's own name rather than
+// keeping whatever the camera or phone called the file (e.g. "Oak Defender.jpg"
+// instead of "IMG_2041.jpg") — `used` tracks names already taken within the
+// same edit session so multiple uploads for one unit don't collide.
+function renamedImageName(base,dataUrl,used){
+  var stem=sanitizeFsName(base||'untitled'),ext=extFromDataUrl(dataUrl)||'.jpg';
+  var name=stem+ext,i=2;
+  while(used[name]){name=stem+'_'+i+ext;i++;}
+  used[name]=true;return name;}
 function exportAllImages(){
   var imgs=allImagesFlat();
   if(!imgs.length){toast('No images to export');return;}
