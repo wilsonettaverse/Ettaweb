@@ -1013,13 +1013,14 @@ function sprintEnded(n){var s=sprintDef(n);return !!(s&&s.end&&new Date(s.end+'T
 // matching at all.
 function currentSprintNum(){for(var i=0;i<SPRINT_DEFS.length;i++){if(!sprintEnded(SPRINT_DEFS[i].n))return SPRINT_DEFS[i].n;}return lastSprint();}
 // Buckets an already-filtered task/character list by sprint, sorted so the
-// current sprint's group always comes first and the rest follow in sprint
-// order — used by both Tasks views (paintTasksPage, paintTaskList) so
-// "what's active right now" never gets buried under older finished sprints.
+// current sprint's group always comes first and the rest follow newest to
+// oldest — used by both Tasks views (paintTasksPage, paintTaskList) so
+// "what's active right now" never gets buried under older finished sprints,
+// and upcoming/recent sprints read top-to-bottom before older ones.
 function groupBySprintOrdered(list){var cur=currentSprintNum(),groups={};
   list.forEach(function(t){var sp=t.sprint||0;(groups[sp]=groups[sp]||[]).push(t);});
   var nums=Object.keys(groups).map(Number);
-  nums.sort(function(a,b){if(a===cur)return -1;if(b===cur)return 1;return a-b;});
+  nums.sort(function(a,b){if(a===cur)return -1;if(b===cur)return 1;return b-a;});
   return nums.map(function(n){return{n:n,cur:n===cur,items:groups[n]};});}
 // Alternative grouping for the Tasks views: by credited artist instead of
 // sprint. "Credited" matches the existing dash.artist / Scores-tab meaning
@@ -2014,8 +2015,49 @@ function reviewAct(id,act){var c=CHARS.find(function(x){return x.id===id;});if(!
     if(el('editorMount')){if(edit&&edit.id===id){if(isAdmin())renderEditor(edit);else renderStatusEditor(edit,el('editorMount'));}}
     paintDashList();});}
 function selIds(){return Object.keys(selected).filter(function(id){return selected[id];});}
+// A mini-sprint <select> fires 'change' on every intermediate value it
+// passes through — not just the one the admin settles on. That happens
+// innocently all the time: a mouse wheel ticking over a focused dropdown
+// while scrolling the roster, an arrow key held a moment too long, a
+// mis-click corrected a second later. Each of those used to fire its own
+// immediate, independent save, and because those saves race the network
+// with no ordering guarantee, whichever one happened to land last — not
+// whichever was picked last — is what stuck. That's the "assign sprint 25,
+// it ends up on sprint 21 (or 2, or 4)" bug: an earlier, already-abandoned
+// pick winning the race against the real one.
+// Debouncing the actual save (while still updating the screen immediately,
+// so this doesn't reintroduce the lag that was just fixed) collapses a
+// whole burst of changes on the same character into exactly one save,
+// carrying only the value the admin actually landed on. `prev` is kept as
+// the value from *before the whole burst*, not the last intermediate pick,
+// so a genuine save failure rolls all the way back to what the server
+// still actually has.
+var pendingSprintSave={};
+function scheduleSprintSave(c,prevIfNew,prevPinnedIfNew){
+  var id=c.id,existing=pendingSprintSave[id];
+  if(existing)clearTimeout(existing.timer);
+  var prev=existing?existing.prev:prevIfNew;
+  var prevPinned=existing?existing.prevPinned:prevPinnedIfNew;
+  var entry={prev:prev,prevPinned:prevPinned};
+  entry.promise=new Promise(function(resolve){
+    entry.timer=setTimeout(function(){
+      if(pendingSprintSave[id]===entry)delete pendingSprintSave[id];
+      resolve(putChar(c).then(loadCaches).then(function(){syncUpsert(c);return c;}).catch(function(err){
+        c.sprint=prev;c.pinnedToTasks=prevPinned;c.updatedAt=Date.now();toast('Update failed: '+err);paintDashList();return null;}));
+    },500);
+  });
+  pendingSprintSave[id]=entry;
+  return entry.promise;}
+// Putting a character into a sprint (here, the bulk mover below, or the main
+// editor's Sprint field — see saveEdit) is, in practice, exactly deciding
+// "this needs doing this sprint", which is what the Tasks board is for. Admins
+// kept having to do that bookkeeping twice: assign the sprint here, then go
+// pin the same character into Tasks by hand. Auto-pinning on assignment does
+// that second step for them; unpinCharFromTasks (the Tasks page's own
+// "Remove from Tasks" action) is left exactly as it was for anyone who wants
+// a sprint-assigned character to NOT show up there.
 function setSprint(id,val){var c=CHARS.find(function(x){return x.id===id;});if(!c)return;
-  var prev=c.sprint;c.sprint=val;c.updatedAt=Date.now();
+  var prev=c.sprint,prevPinned=c.pinnedToTasks;c.sprint=val;c.pinnedToTasks=true;c.updatedAt=Date.now();
   toast(c.name+' → '+sprintName(val));
   // Setting a character's sprint from here is already saved (optimistically),
   // so jumping straight to that sprint's Tasks view (rather than repainting
@@ -2023,19 +2065,17 @@ function setSprint(id,val){var c=CHARS.find(function(x){return x.id===id;});if(!
   // mid-edit character form, where navigating away could lose unsaved
   // changes to other fields.
   taskDash.sprint=val;if(typeof setTab==='function'&&el('crContent'))setTab('tasks');else paintDashList();
-  putChar(c).then(loadCaches).then(function(){syncUpsert(c);}).catch(function(err){
-    c.sprint=prev;c.updatedAt=Date.now();toast('Update failed: '+err);paintDashList();});}
+  scheduleSprintSave(c,prev,prevPinned);}
 function bulkComplete(val){var ids=selIds();if(!ids.length){toast('Select characters first');return;}
   var ops=[],changed=[],prevVals=[];ids.forEach(function(id){var c=CHARS.find(function(x){return x.id===id;});if(c){prevVals.push({c:c,val:c.completed});c.completed=val;c.updatedAt=Date.now();ops.push(putChar(c));changed.push(c);}});
   toast((val?'Marked ':'Unmarked ')+changed.length+' completed');paintDashList();
   Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});}).catch(function(err){
     prevVals.forEach(function(p){p.c.completed=p.val;});toast('Update failed: '+err);paintDashList();});}
 function bulkSprint(val){var ids=selIds();if(!ids.length){toast('Select characters first');return;}
-  var ops=[],changed=[],prevVals=[];ids.forEach(function(id){var c=CHARS.find(function(x){return x.id===id;});if(c){prevVals.push({c:c,val:c.sprint});c.sprint=val;c.updatedAt=Date.now();ops.push(putChar(c));changed.push(c);}});
+  var ops=[],changed=[];ids.forEach(function(id){var c=CHARS.find(function(x){return x.id===id;});if(c){var prev=c.sprint,prevPinned=c.pinnedToTasks;c.sprint=val;c.pinnedToTasks=true;c.updatedAt=Date.now();changed.push(c);ops.push(scheduleSprintSave(c,prev,prevPinned));}});
   toast('Moved '+changed.length+' to '+sprintName(val));
   taskDash.sprint=val;if(typeof setTab==='function'&&el('crContent'))setTab('tasks');else paintDashList();
-  Promise.all(ops).then(loadCaches).then(function(){if(SHEET_URL)sheetPost({action:'bulk',characters:changed.map(flat)});}).catch(function(err){
-    prevVals.forEach(function(p){p.c.sprint=p.val;});toast('Update failed: '+err);paintDashList();});}
+  if(SHEET_URL)Promise.all(ops).then(function(){sheetPost({action:'bulk',characters:changed.map(flat)});});}
 
 /* ---------- analytics ---------- */
 function toggleAnalytics(){var m=el('analyticsMount');if(!m)return;if(m.dataset.open){m.dataset.open='';m.innerHTML='';return;}m.dataset.open='1';renderAnalytics(m);}
@@ -2203,7 +2243,7 @@ function anRow(label,done,total,color,extra){var p=total?Math.round(done/total*1
   return '<div class="an-row"><span class="an-row-lab">'+esc(label)+'</span><div class="astat-bar"><i style="width:'+p+'%;background:'+color+'"></i></div><span class="an-row-num">'+done+'/'+total+(extra?' '+extra:'')+'</span></div>';}
 function renderAnalytics(mount){var a=computeAnalytics();var pct=a.total?Math.round(a.completed/a.total*100):0;
   var spset={};sprintNums().forEach(function(n){spset[n]=1;});Object.keys(a.bySprint).forEach(function(n){spset[n]=1;});
-  var spList=Object.keys(spset).map(Number).sort(function(x,y){return x-y;});
+  var spList=Object.keys(spset).map(Number).sort(function(x,y){return y-x;});
   mount.innerHTML='<div class="panel analytics"><div class="panel-row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">Analytics</h3><button class="btn ghost sm" id="anExport">⤓ Export as HTML</button></div>'
     +'<div class="an-tiles"><div class="an-tile"><b>'+a.completed+'/'+a.total+'</b><span>Completed</span></div>'
       +'<div class="an-tile"><b>'+a.reviews+'</b><span>Reviews received</span></div>'
@@ -3141,12 +3181,21 @@ function parseStats(s){if(!s)return null;var p=String(s).split('/');if(p.length!
 function saveEdit(){if(!edit.name||!String(edit.name).trim()){toast('Name is required');return;}
   var oldC=edit.id?CHARS.find(function(x){return x.id===edit.id;}):null;
   var id=edit.id||(edit.clan+'-new-'+uid());
-  var rec={id:id,clan:edit.clan,num:Number(edit.num)||0,name:String(edit.name).trim(),mana:Number(edit.mana)||0,arch:edit.arch,type:edit.type,tier:edit.tier,sprint:Number(edit.sprint)||1,gender:edit.gender||'',height:edit.height||'',l1:edit.l1,l6:edit.l6,l12:edit.l12,stats:parseStats(edit.l12),abilities:edit.abilities.slice(),status:Object.assign(defStatus(),edit.status),modeledBy:edit.modeledBy||'',texturedBy:edit.texturedBy||'',weaponName:String(edit.weaponName||'').trim(),completed:!!edit.completed,primaryImageId:edit.primaryId,updatedAt:Date.now(),
+  var recSprint=Number(edit.sprint)||1;
+  // A character is new, or just got put into a (possibly different) sprint
+  // from this editor's own Sprint field, either of which counts as "putting
+  // it in a sprint" the same as the dashboard's quick sprint-select does (see
+  // setSprint/bulkSprint) — so it belongs on the Tasks board the same way,
+  // without a separate manual "add to Tasks" step. Already-pinned stays
+  // pinned regardless; unpinCharFromTasks (Tasks page "Remove from Tasks")
+  // is still there for anyone who wants it off the board on purpose.
+  var justSprinted=!oldC||Number(oldC.sprint||0)!==recSprint;
+  var rec={id:id,clan:edit.clan,num:Number(edit.num)||0,name:String(edit.name).trim(),mana:Number(edit.mana)||0,arch:edit.arch,type:edit.type,tier:edit.tier,sprint:recSprint,gender:edit.gender||'',height:edit.height||'',l1:edit.l1,l6:edit.l6,l12:edit.l12,stats:parseStats(edit.l12),abilities:edit.abilities.slice(),status:Object.assign(defStatus(),edit.status),modeledBy:edit.modeledBy||'',texturedBy:edit.texturedBy||'',weaponName:String(edit.weaponName||'').trim(),completed:!!edit.completed,primaryImageId:edit.primaryId,updatedAt:Date.now(),
     // Carried over rather than rebuilt from the edit form, same as history below:
     // pinnedToTasks isn't a field this editor exposes, so without this the record
     // rebuilt here would silently drop a character back out of the Tasks views
     // every time it's saved from the normal character editor.
-    pinnedToTasks:!!(oldC&&oldC.pinnedToTasks),
+    pinnedToTasks:!!(oldC&&oldC.pinnedToTasks)||justSprinted,
     // history comes from edit (the in-memory copy), not oldC (the server's
     // copy), so that an admin's edits to it in this editor — e.g. deleting
     // an entry via bindHistory — actually stick instead of being overwritten
