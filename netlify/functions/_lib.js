@@ -108,6 +108,47 @@ async function getCharacters() {
 async function setCharacters(arr) {
   await dataStore().setJSON('characters', arr);
 }
+
+// Safely applies a change to a list stored as one JSON blob (characters,
+// tasks, images-meta — each one record per character/task/image, all under
+// a single key). A plain read-modify-write (read the list, change one
+// record, write the whole list back) is only safe if saves never overlap —
+// but once most actions save in the background right after a click, two
+// saves for the same key routinely land close together (even for two
+// different characters, or two unrelated fields), and Blobs has no
+// multi-key transaction to keep that safe on its own. Whichever write
+// landed last would otherwise win outright, using a list it read *before*
+// the other save happened — silently erasing that other save, with no
+// error on either side. That's the "assign a sprint and it quietly reverts"
+// class of bug.
+//
+// This closes that gap with optimistic concurrency: read the list along
+// with its current ETag, hand it to `mutate(list)` to produce the list to
+// write, and write back only `onlyIfMatch` that exact ETag (or `onlyIfNew`
+// when the key doesn't exist yet). If another save slipped in between our
+// read and our write, the ETag won't match, the write comes back
+// `modified:false`, and we re-read the now-current list and try again —
+// so our change still lands, on top of the other save rather than
+// clobbering it. `mutate` may run more than once (once per retry), so it
+// must be a pure function of the list it's given — no side effects beyond
+// returning the next list. Returning `null` from `mutate` means "nothing to
+// write after all" (e.g. the record to update wasn't found) and skips the
+// write entirely, returning `null`.
+async function updateList(key, mutate) {
+  const store = dataStore();
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const current = await store.getWithMetadata(key, { type: 'json' });
+    const list = Array.isArray(current && current.data) ? current.data : [];
+    const next = mutate(list);
+    if (next === null) return null;
+    const opts = (current && current.etag) ? { onlyIfMatch: current.etag } : { onlyIfNew: true };
+    const result = await store.setJSON(key, next, opts);
+    if (result.modified) return next;
+    // Someone else wrote to this key between our read and our write attempt
+    // — re-read the now-current list and re-apply `mutate` to it.
+  }
+  throw new Error('Could not save — too many people editing this at once, please try again');
+}
 // Tasks are small jobs (environment art, misc one-offs) that aren't tied to
 // any clan. They live in their own blob key, share the images store with
 // characters (image ids are globally unique), and share the same status/
@@ -182,6 +223,7 @@ module.exports = {
   uid,
   getCharacters,
   setCharacters,
+  updateList,
   getTasks,
   setTasks,
   getImagesMeta,

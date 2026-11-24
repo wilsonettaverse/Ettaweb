@@ -1,4 +1,4 @@
-const { connectLambda, getImagesMeta, setImagesMeta, imageStore, requireSession, json, uid, parseDataUrl } = require('./_lib');
+const { connectLambda, updateList, imageStore, requireSession, json, uid, parseDataUrl } = require('./_lib');
 
 exports.handler = async (event) => {
   connectLambda(event);
@@ -19,12 +19,16 @@ exports.handler = async (event) => {
     // history — replacing or restoring a version never deletes the old one
     // outright any more, it's just archived/unarchived in place.
     if (body.archiveId && !(body.dataUrl || body.data)) {
-      const metaArr = await getImagesMeta();
-      const i = metaArr.findIndex(function (x) { return x.id === body.archiveId; });
-      if (i < 0) return json(404, { error: 'Image not found' });
-      metaArr[i] = Object.assign({}, metaArr[i], { archived: !!body.archived });
-      await setImagesMeta(metaArr);
-      const m = metaArr[i];
+      let found = null;
+      await updateList('images', function (metaArr) {
+        const i = metaArr.findIndex(function (x) { return x.id === body.archiveId; });
+        if (i < 0) { found = null; return null; }
+        metaArr[i] = Object.assign({}, metaArr[i], { archived: !!body.archived });
+        found = metaArr[i];
+        return metaArr;
+      });
+      if (!found) return json(404, { error: 'Image not found' });
+      const m = found;
       return json(200, { id: m.id, charId: m.charId, name: m.name, ts: m.ts, by: m.by || null, kind: m.kind || '', archived: !!m.archived, data: '/api/image?id=' + encodeURIComponent(m.id) });
     }
 
@@ -40,15 +44,16 @@ exports.handler = async (event) => {
     // same endpoint/store; it's just carried through, never interpreted here.
     const kind = body.kind || '';
     await imageStore().set(id, parsed.bytes, { metadata: { contentType: parsed.contentType, charId: body.charId, name: name, kind: kind } });
-    const metaArr = await getImagesMeta();
-    const i = metaArr.findIndex(function (x) { return x.id === id; });
     // 'by' is the authenticated session's own name, never trusted from the request body,
     // so the upload-history attribution can't be spoofed by the client.
     const by = session.name;
     const entry = { id: id, charId: body.charId, name: name, ts: ts, by: by, kind: kind };
-    if (i >= 0) metaArr[i] = entry;
-    else metaArr.push(entry);
-    await setImagesMeta(metaArr);
+    await updateList('images', function (metaArr) {
+      const i = metaArr.findIndex(function (x) { return x.id === id; });
+      if (i >= 0) metaArr[i] = entry;
+      else metaArr.push(entry);
+      return metaArr;
+    });
     return json(200, { id: id, charId: body.charId, name: name, ts: ts, by: by, kind: kind, data: '/api/image?id=' + encodeURIComponent(id) });
   }
 
@@ -58,8 +63,9 @@ exports.handler = async (event) => {
     const id = (event.queryStringParameters || {}).id;
     if (!id) return json(400, { error: 'Missing id' });
     await imageStore().delete(id);
-    const metaArr = await getImagesMeta();
-    await setImagesMeta(metaArr.filter(function (x) { return x.id !== id; }));
+    await updateList('images', function (metaArr) {
+      return metaArr.filter(function (x) { return x.id !== id; });
+    });
     return json(200, { ok: true });
   }
 

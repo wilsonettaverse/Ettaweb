@@ -1,4 +1,4 @@
-const { connectLambda, getCharacters, setCharacters, requireSession, json, uid } = require('./_lib');
+const { connectLambda, updateList, requireSession, json, uid } = require('./_lib');
 
 exports.handler = async (event) => {
   connectLambda(event);
@@ -15,11 +15,12 @@ exports.handler = async (event) => {
     if (!body || typeof body !== 'object') return json(400, { error: 'Bad payload' });
     if (!body.id) body.id = uid();
     body.updatedAt = Date.now();
-    const chars = await getCharacters();
-    const i = chars.findIndex(function (c) { return c.id === body.id; });
-    if (i >= 0) chars[i] = body;
-    else chars.push(body);
-    await setCharacters(chars);
+    await updateList('characters', function (chars) {
+      const i = chars.findIndex(function (c) { return c.id === body.id; });
+      if (i >= 0) chars[i] = body;
+      else chars.push(body);
+      return chars;
+    });
     return json(200, body);
   }
 
@@ -28,8 +29,9 @@ exports.handler = async (event) => {
     if (!session || session.role !== 'Admin') return json(401, { error: 'Admin sign-in required' });
     const id = (event.queryStringParameters || {}).id;
     if (!id) return json(400, { error: 'Missing id' });
-    const chars = await getCharacters();
-    await setCharacters(chars.filter(function (c) { return c.id !== id; }));
+    await updateList('characters', function (chars) {
+      return chars.filter(function (c) { return c.id !== id; });
+    });
     return json(200, { ok: true });
   }
 
